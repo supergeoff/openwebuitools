@@ -1,153 +1,153 @@
-# Architecture technique et cycle de vie
+# Technical Architecture and Lifecycle
 
-## Flux de données global
+## Global Data Flow
 
 ```
 User Input → Inlet Filters → RAG Query → LLM Call → Outlet Filters → UI Display
-                ↓                                          ↓
-           Pré-traitement                           Post-traitement
+                 ↓                                          ↓
+            Pre-processing                            Post-processing
 ```
 
-> Source : https://deepwiki.com/open-webui/docs/4.2-functions-system — consultée le 13/04/2026
+> Source: https://deepwiki.com/open-webui/docs/4.2-functions-system — consulted 04/13/2026
 >
-> **Avertissement :** DeepWiki est une source IA-générée dont la fiabilité est limitée. Le schéma de flux ci-dessus a été vérifié contre le code source mais peut contenir des approximations.
+> **Warning:** DeepWiki is an AI-generated source with limited reliability. The flow diagram above was verified against source code but may contain approximations.
 
-## Cycle de vie d'une Function custom
+## Lifecycle of a Custom Function
 
-### Stockage
+### Storage
 
-Table `function` en base de données :
+`function` table in database:
 
-| Colonne | Type | Description |
-|---------|------|-------------|
-| `id` | String (PK) | Identifiant unique |
-| `user_id` | String | Créateur |
-| `name` | Text | Nom d'affichage |
-| `type` | Text | `"pipe"`, `"filter"` ou `"action"` |
-| `content` | Text | Code Python source |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | String (PK) | Unique identifier |
+| `user_id` | String | Creator |
+| `name` | Text | Display name |
+| `type` | Text | `"pipe"`, `"filter"`, or `"action"` |
+| `content` | Text | Source Python code |
 | `meta` | JSONField | `{description, manifest}` |
-| `valves` | JSONField | Configuration admin |
-| `is_active` | Boolean | Activée ou non |
-| `is_global` | Boolean | S'applique à tous les modèles |
+| `valves` | JSONField | Admin configuration |
+| `is_active` | Boolean | Enabled or not |
+| `is_global` | Boolean | Applies to all models |
 | `updated_at` | BigInteger | Epoch timestamp |
 | `created_at` | BigInteger | Epoch timestamp |
 
-> Source : https://github.com/open-webui/open-webui/blob/main/backend/open_webui/models/functions.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/open-webui/blob/main/backend/open_webui/models/functions.py — consulted 04/13/2026
 
-### Modèles Pydantic associés
+### Associated Pydantic Models
 
-- **FunctionModel** : Représentation complète
-- **FunctionWithValvesModel** : Avec valves optionnelles
-- **FunctionResponse** : Pour API, exclut le champ content
-- **FunctionForm** : Input (id, name, content, meta requis)
+- **FunctionModel**: Complete representation
+- **FunctionWithValvesModel**: With optional valves
+- **FunctionResponse**: For API, excludes content field
+- **FunctionForm**: Input (id, name, content, meta required)
 
-### Méthodes CRUD principales
+### Main CRUD Methods
 
-| Méthode | Rôle |
-|---------|------|
-| `insert_new_function()` | Création avec timestamps auto |
-| `sync_functions()` | Synchronisation batch (update existing, insert new, delete obsolete) |
-| `get_function_by_id()` | Lecture |
-| `get_functions_by_type()` | Filtrage par type |
-| `get_global_filter_functions()` | Filtres globaux actifs |
-| `get_global_action_functions()` | Actions globales actives |
-| `get_function_valves_by_id()` | Récupération valves |
-| `get_user_valves_by_id_and_user_id()` | Valves utilisateur (stockées dans user settings) |
-| `update_function_valves_by_id()` | Mise à jour valves |
-| `_get_access_grants()` | Lecture des droits d'accès d'une fonction |
-| `get_tools_by_user_id()` | Outils accessibles par un utilisateur donné |
+| Method | Role |
+|--------|------|
+| `insert_new_function()` | Creation with auto timestamps |
+| `sync_functions()` | Batch synchronization (update existing, insert new, delete obsolete) |
+| `get_function_by_id()` | Read |
+| `get_functions_by_type()` | Filter by type |
+| `get_global_filter_functions()` | Active global filters |
+| `get_global_action_functions()` | Active global actions |
+| `get_function_valves_by_id()` | Get valves |
+| `get_user_valves_by_id_and_user_id()` | User valves (stored in user settings) |
+| `update_function_valves_by_id()` | Update valves |
+| `_get_access_grants()` | Read function access rights |
+| `get_tools_by_user_id()` | Tools accessible by a given user |
 
-### Chargement et exécution
+### Loading and Execution
 
-| Étape | Fonction | Description |
-|-------|----------|-------------|
-| Chargement module | `get_function_module_by_id(request, pipe_id)` | Récupère le module avec cache, initialise les Valves depuis la BDD |
-| Énumération modèles Pipe | `get_function_models(request)` | Énumère toutes les fonctions pipe actives, gère les manifolds (pipes multiples), génère des IDs composites `pipe.id.sub_id` |
-| Exécution principale | `generate_function_chat_completion(request, form_data, user, models)` | Extrait metadata, construit `extra_params` avec les paramètres injectés, charge le module, exécute le pipe |
-| Injection de paramètres | `get_function_params(function_module, form_data, user, extra_params)` | Utilise `inspect.signature()` pour matcher extra_params avec les paramètres déclarés par la fonction |
-| Exécution pipe | `execute_pipe(pipe, params)` | Détecte si la fonction est async ou sync, exécute avec les paramètres injectés |
-| Réponse streaming | Si `form_data['stream']` est True | Réponses wrappées dans `StreamingResponse` au format event-stream. Supporte : string, Generator sync, AsyncGenerator |
+| Step | Function | Description |
+|------|----------|-------------|
+| Module loading | `get_function_module_by_id(request, pipe_id)` | Retrieves module with cache, initializes Valves from DB |
+| Pipe model enumeration | `get_function_models(request)` | Enumerates all active pipe functions, handles manifolds (multiple pipes), generates composite IDs `pipe.id.sub_id` |
+| Main execution | `generate_function_chat_completion(request, form_data, user, models)` | Extracts metadata, builds `extra_params` with injected parameters, loads module, executes pipe |
+| Parameter injection | `get_function_params(function_module, form_data, user, extra_params)` | Uses `inspect.signature()` to match extra_params with parameters declared by the function |
+| Pipe execution | `execute_pipe(pipe, params)` | Detects if function is async or sync, executes with injected parameters |
+| Streaming response | If `form_data['stream']` is True | Responses wrapped in `StreamingResponse` in event-stream format. Supports: string, sync Generator, AsyncGenerator |
 
-> Source : https://raw.githubusercontent.com/open-webui/open-webui/main/backend/open_webui/functions.py — consultée le 13/04/2026
+> Source: https://raw.githubusercontent.com/open-webui/open-webui/main/backend/open_webui/functions.py — consulted 04/13/2026
 
-## Cycle de vie d'un Tool
+## Tool Lifecycle
 
-### Stockage
+### Storage
 
-Table `tool` en base de données :
+`tool` table in database:
 
-| Colonne | Type | Description |
-|---------|------|-------------|
-| `id` | String (PK) | Identifiant unique |
-| `user_id` | String | Créateur |
-| `name` | Text | Nom d'affichage |
-| `content` | Text | Code Python source |
-| `specs` | JSONField | JSON schema des fonctions du tool |
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | String (PK) | Unique identifier |
+| `user_id` | String | Creator |
+| `name` | Text | Display name |
+| `content` | Text | Source Python code |
+| `specs` | JSONField | JSON schema of tool functions |
 | `meta` | JSONField | `{description, manifest}` |
-| `valves` | JSONField | Configuration admin |
+| `valves` | JSONField | Admin configuration |
 | `updated_at` | BigInteger | Epoch timestamp |
 | `created_at` | BigInteger | Epoch timestamp |
 
-> Source : https://github.com/open-webui/open-webui/blob/main/backend/open_webui/models/tools.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/open-webui/blob/main/backend/open_webui/models/tools.py — consulted 04/13/2026
 
-### Modèles Pydantic associés
+### Associated Pydantic Models
 
-- **ToolModel** : Avec access_grants
-- **ToolUserModel** : Avec UserResponse
-- **ToolAccessResponse** : Avec write_access boolean
-- **ToolForm** : Input (id, name, content, meta, access_grants optionnel)
+- **ToolModel**: With access_grants
+- **ToolUserModel**: With UserResponse
+- **ToolAccessResponse**: With write_access boolean
+- **ToolForm**: Input (id, name, content, meta, optional access_grants)
 
-### Chargement
+### Loading
 
-`get_tools()` dans `utils/tools.py` — vérifie le contrôle d'accès, charge les modules, applique les Valves, injecte les paramètres, gère les collisions de noms.
+`get_tools()` in `utils/tools.py` — checks access control, loads modules, applies Valves, injects parameters, handles name collisions.
 
-### Types de Tools
+### Tool Types
 
 | Type | Description |
 |------|-------------|
-| Builtin | Hardcoded : search, code, memory |
-| Local | BDD + plugin loader |
-| OpenAPI | Serveurs externes |
+| Builtin | Hardcoded: search, code, memory |
+| Local | DB + plugin loader |
+| OpenAPI | External servers |
 | Terminal | CLI |
 
-> Source : https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/tools.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/tools.py — consulted 04/13/2026
 
-### Injection invisible des paramètres
+### Invisible Parameter Injection
 
-`get_async_tool_function_and_apply_extra_params()` — wrappe les fonctions pour injecter `__id__`, `__user__`, etc. tout en les masquant de la signature visible par le modèle.
+`get_async_tool_function_and_apply_extra_params()` — wraps functions to inject `__id__`, `__user__`, etc. while hiding them from the visible signature by the model.
 
-> Source : https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/tools.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/open-webui/blob/main/backend/open_webui/utils/tools.py — consulted 04/13/2026
 
-### Contrôle d'accès des Tools
+### Tool Access Control
 
-3 niveaux :
+3 levels:
 
-| Niveau | Description |
-|--------|-------------|
-| Bypass admin | Les administrateurs contournent les restrictions |
-| Propriétaire (creator-only) | Seul le créateur peut utiliser le tool |
-| Group-based grants | Accès par groupes d'utilisateurs |
+| Level | Description |
+|-------|-------------|
+| Bypass admin | Administrators bypass restrictions |
+| Owner (creator-only) | Only the creator can use the tool |
+| Group-based grants | Access by user groups |
 
 > "Attached workspace tool to a model does not bypass access control. When a user chats, Open WebUI checks whether that specific user has read access to each attached tool."
 >
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/ — consulted 04/13/2026
 
-## Pipeline Scaffolds (Pipelines externes)
+## Pipeline Scaffolds (External Pipelines)
 
-Les Pipelines disposent de hooks de cycle de vie spécifiques :
+Pipelines have specific lifecycle hooks:
 
 | Hook | Description |
 |------|-------------|
-| `on_startup()` | Appelé au démarrage du serveur |
-| `on_shutdown()` | Appelé à l'arrêt du serveur |
-| `on_valves_updated()` | Appelé quand les valves sont mises à jour |
+| `on_startup()` | Called when server starts |
+| `on_shutdown()` | Called when server stops |
+| `on_valves_updated()` | Called when valves are updated |
 
-### Exemple scaffold Pipeline basique
+### Basic Pipeline Scaffold Example
 
 ```python
 from typing import List, Union, Generator, Iterator
 from pydantic import BaseModel
-from schemas import OpenAIChatMessage  # Uniquement disponible dans le contexte Pipelines, pas dans Open WebUI main
+from schemas import OpenAIChatMessage  # Only available in Pipelines context, not in Open WebUI main
 
 class Pipeline:
     class Valves(BaseModel):
@@ -182,9 +182,9 @@ class Pipeline:
         return f"{__name__} response to: {user_message}"
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/example_pipeline_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/example_pipeline_scaffold.py — consulted 04/13/2026
 
-### Exemple scaffold Filter Pipeline
+### Filter Pipeline Scaffold Example
 
 ```python
 """
@@ -216,9 +216,9 @@ class Pipeline:
         return body
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/filter_pipeline_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/filter_pipeline_scaffold.py — consulted 04/13/2026
 
-### Exemple scaffold Manifold Pipeline
+### Manifold Pipeline Scaffold Example
 
 ```python
 class Pipeline:
@@ -236,9 +236,9 @@ class Pipeline:
         return f"{model_id} response to: {user_message}"
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/manifold_pipeline_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/manifold_pipeline_scaffold.py — consulted 04/13/2026
 
-### Exemple scaffold Function Calling Pipeline
+### Function Calling Pipeline Scaffold Example
 
 ```python
 from typing import List, Union, Generator, Iterator
@@ -258,9 +258,9 @@ class Pipeline:
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator, Iterator]:
-        # Le function calling scaffold démontre comment exposer
-        # un pipeline avec support natif du function calling
+        # The function calling scaffold demonstrates how to expose
+        # a pipeline with native function calling support
         return f"{model_id} response to: {user_message}"
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/function_calling_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/function_calling_scaffold.py — consulted 04/13/2026

@@ -1,101 +1,101 @@
-# Taxonomie du système d'extensibilité Open WebUI
+# Open WebUI Extensibility System Taxonomy
 
-## Trois couches d'extensibilité
+## Three Layers of Extensibility
 
-Open WebUI offre trois couches distinctes pour étendre ses capacités :
+Open WebUI offers three distinct layers to extend its capabilities:
 
-| Couche | Mécanisme | Exécution | Cas d'usage |
-|--------|-----------|-----------|-------------|
-| **1. In-process Python** | Tools & Functions | Dans le processus Open WebUI | Logique custom, interaction UI, filtrage |
-| **2. External HTTP** | OpenAPI & MCP servers | Services externes | Intégrations SaaS, APIs tierces, outils hébergés |
-| **3. Pipeline workers** | Pipelines | Conteneur Docker séparé (port 9099) | Tâches lourdes, packages custom, isolation |
+| Layer | Mechanism | Execution | Use Cases |
+|-------|-----------|-----------|-----------|
+| **1. In-process Python** | Tools & Functions | Within Open WebUI process | Custom logic, UI interaction, filtering |
+| **2. External HTTP** | OpenAPI & MCP servers | External services | SaaS integrations, third-party APIs, hosted tools |
+| **3. Pipeline workers** | Pipelines | Separate Docker container (port 9099) | Heavy tasks, custom packages, isolation |
 
-> Source : https://docs.openwebui.com/features/extensibility/pipelines/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/pipelines/ — consulted 04/13/2026
 
-## Types d'extensions principaux
+## Main Extension Types
 
-### Tools (outils appelés par le LLM)
+### Tools (tools called by the LLM)
 
-Scripts Python exécutés dans l'environnement Open WebUI, appelés par le LLM via function calling. Définition officielle : *"Python scripts that run directly within the Open WebUI environment"*. Deux modes de tool calling : **Default** (Legacy, injection dans le prompt) et **Native** (Agentic, capacités natives du modèle).
+Python scripts executed in the Open WebUI environment, called by the LLM via function calling. Official definition: *"Python scripts that run directly within the Open WebUI environment"*. Two tool calling modes: **Default** (Legacy, prompt injection) and **Native** (Agentic, native model capabilities).
 
-Gérés dans les onglets **Workspace**. Capacités complètes de Python.
+Managed in the **Workspace** tabs. Full Python capabilities.
 
 > "Workspace Tools execute arbitrary Python code on your server. Only install from trusted sources, review code before importing, and restrict Workspace access to trusted administrators only. Granting a user the ability to create or import Tools is equivalent to giving them shell access."
 >
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consulted 04/13/2026
 
-### Functions (trois sous-types)
+### Functions (three subtypes)
 
-Gérées depuis l'**Admin Panel**. Aident "the WebUI itself do more things, like adding new AI models". Exécution via `exec` dans le processus Open WebUI.
+Managed from the **Admin Panel**. Help "the WebUI itself do more things, like adding new AI models". Execution via `exec` in the Open WebUI process.
 
-#### Pipe Function (modèle/agent custom)
+#### Pipe Function (custom model/agent)
 
-Se présente comme un **modèle autonome** dans l'interface. Traite les requêtes avec logique custom. Peut exposer plusieurs modèles via le pattern Manifold (`pipes()` retournant une liste).
+Appears as a **standalone model** in the interface. Processes requests with custom logic. Can expose multiple models via the Manifold pattern (`pipes()` returning a list).
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/pipe/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/pipe/ — consulted 04/13/2026
 
-#### Filter Function (pré/post-traitement)
+#### Filter Function (pre/post-processing)
 
-Modifie les données en entrée (`inlet`), en streaming (`stream`) et en sortie (`outlet`) du LLM. Agit comme middleware.
+Modifies input data (`inlet`), streaming (`stream`), and output data (`outlet`) of the LLM. Acts as middleware.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ — consulted 04/13/2026
 
-#### Action Function (boutons interactifs)
+#### Action Function (interactive buttons)
 
-Boutons interactifs dans la barre de messages, exécute du Python côté serveur. Communication bidirectionnelle avec l'utilisateur via `__event_call__`.
+Interactive buttons in the message bar, executes Python server-side. Bidirectional communication with the user via `__event_call__`.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/action/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/action/ — consulted 04/13/2026
 
-### Pipelines (service séparé)
+### Pipelines (separate service)
 
-Service séparé déployé via Docker (`ghcr.io/open-webui/pipelines:main`), port 9099. **Python 3.11 requis.** Recommandé quand "dealing with computationally heavy tasks that you want to offload from your main Open WebUI instance for better performance and scalability." Compatible avec tout client supportant l'API OpenAI.
+Separate service deployed via Docker (`ghcr.io/open-webui/pipelines:main`), port 9099. **Python 3.11 required.** Recommended when "dealing with computationally heavy tasks that you want to offload from your main Open WebUI instance for better performance and scalability." Compatible with any client supporting the OpenAI API.
 
-> Source : https://docs.openwebui.com/features/extensibility/pipelines/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/pipelines/ — consulted 04/13/2026
 
-### Outils externes (OpenAPI & MCP)
+### External Tools (OpenAPI & MCP)
 
-- **OpenAPI Tool Servers** : services REST externes exposant une spec OpenAPI. Intégration via Admin Settings → External Tools.
-- **MCP (Model Context Protocol)** : protocole standard supporté nativement depuis v0.6.31. Connexion Streamable HTTP uniquement.
+- **OpenAPI Tool Servers**: External REST services exposing an OpenAPI spec. Integration via Admin Settings → External Tools.
+- **MCP (Model Context Protocol)**: Standard protocol supported natively since v0.6.31. Streamable HTTP connection only.
 
-> Voir [12-external-tools.md](12-external-tools.md) pour les détails complets.
+> See [12-external-tools.md](12-external-tools.md) for complete details.
 
-## Tableau comparatif
+## Comparative Table
 
 | Aspect | Tools | Pipe | Filter | Action | Pipeline | OpenAPI | MCP |
 |--------|-------|------|--------|--------|----------|---------|-----|
-| **Qui appelle** | Le LLM (function calling) | L'utilisateur (sélection modèle) | Automatique (middleware) | L'utilisateur (clic bouton) | L'utilisateur (sélection modèle) | Le LLM (function calling) | Le LLM (function calling) |
-| **Où ça tourne** | Processus Open WebUI | Processus Open WebUI | Processus Open WebUI | Processus Open WebUI | Conteneur Docker séparé | Service externe | Service externe |
-| **UI** | Workspace | Admin Panel (modèle) | Admin Panel (filter) | Boutons sous messages | Admin Panel (modèle) | External Tools | External Tools |
-| **Import packages** | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | N'importe quel package | N/A (service externe) | N/A (service externe) |
+| **Who calls** | The LLM (function calling) | User (model selection) | Automatic (middleware) | User (button click) | User (model selection) | The LLM (function calling) | The LLM (function calling) |
+| **Where it runs** | Open WebUI process | Open WebUI process | Open WebUI process | Open WebUI process | Separate Docker container | External service | External service |
+| **UI** | Workspace | Admin Panel (model) | Admin Panel (filter) | Buttons under messages | Admin Panel (model) | External Tools | External Tools |
+| **Import packages** | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | Via frontmatter `requirements` (pip install runtime) | Any package | N/A (external service) | N/A (external service) |
 | **Events** | `__event_emitter__` + `__event_call__` | `__event_emitter__` + `__event_call__` | `__event_emitter__` + `__event_call__` | `__event_emitter__` + `__event_call__` | Via REST endpoint | One-way (REST endpoint) | One-way (REST endpoint) |
-| **Rich UI** | HTMLResponse | Non | Non | HTMLResponse | Non | Non | Non |
-| **Valves** | Oui | Oui | Oui | Oui | Oui | N/A | N/A |
+| **Rich UI** | HTMLResponse | No | No | HTMLResponse | No | No | No |
+| **Valves** | Yes | Yes | Yes | Yes | Yes | N/A | N/A |
 
-## Functions internes vs Pipelines externes
+## Internal Functions vs External Pipelines
 
-| Aspect | Functions internes | Pipelines externes |
+| Aspect | Internal Functions | External Pipelines |
 |--------|-------------------|-------------------|
-| Exécution | Dans le processus Open WebUI | Conteneur Docker dédié (port 9099) |
-| Import packages | Via frontmatter `requirements` (mécanisme runtime pip install, pas un vrai import Python natif) | N'importe quel package Python |
-| Isolation | Aucune (même processus) | Isolé dans son propre conteneur |
+| Execution | Within Open WebUI process | Dedicated Docker container (port 9099) |
+| Import packages | Via frontmatter `requirements` (runtime pip install mechanism, not a real native Python import) | Any Python package |
+| Isolation | None (same process) | Isolated in its own container |
 | Configuration | Admin Panel | Admin Panel > Settings > Connections |
-| Connexion | N/A | URL: `http://localhost:9099`, API key: `0p3n-w3bu!` |
-| Déploiement | Intégré | `docker run -d -p 9099:9099 --add-host=host.docker.internal:host-gateway -v pipelines:/app/pipelines --name pipelines --restart always ghcr.io/open-webui/pipelines:main` |
-| Chargement auto | N/A | Tous les pipelines dans `/pipelines` sont chargés au démarrage. Configurable via `PIPELINES_DIR` |
+| Connection | N/A | URL: `http://localhost:9099`, API key: `0p3n-w3bu!` |
+| Deployment | Integrated | `docker run -d -p 9099:9099 --add-host=host.docker.internal:host-gateway -v pipelines:/app/pipelines --name pipelines --restart always ghcr.io/open-webui/pipelines:main` |
+| Auto-loading | N/A | All pipelines in `/pipelines` are loaded at startup. Configurable via `PIPELINES_DIR` |
 
-> "If your goal is simply to add support for additional providers...you likely don't need Pipelines." Utiliser les Functions internes pour les cas basiques.
+> "If your goal is simply to add support for additional providers...you likely don't need Pipelines." Use internal Functions for basic cases.
 >
-> Source : https://docs.openwebui.com/features/extensibility/pipelines/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/pipelines/ — consulted 04/13/2026
 
-## Confusion nomenclature connue
+## Known Nomenclature Confusion
 
-La communauté a identifié une confusion significative dans la taxonomie (Discussion GitHub #16415) :
+The community has identified significant confusion in the taxonomy (GitHub Discussion #16415):
 
-- 5 catégories distinctes créent la confusion : **Capabilities**, **Tools**, **Tool Servers**, **Functions** (Filters/Actions/Pipes), **Pipelines**
-- "Tools" et "Capabilities" font des choses similaires avec des termes différents
-- La structure de la documentation ne correspond pas à l'organisation de l'UI (ex : la doc met "Filters" et "Pipes" sous "Pipelines", mais l'UI les place sous "Functions")
-- "Functions" combine 3 opérations avec des workflows utilisateur fondamentalement différents
+- 5 distinct categories create confusion: **Capabilities**, **Tools**, **Tool Servers**, **Functions** (Filters/Actions/Pipes), **Pipelines**
+- "Tools" and "Capabilities" do similar things with different terms
+- Documentation structure does not match UI organization (e.g., docs place "Filters" and "Pipes" under "Pipelines", but UI places them under "Functions")
+- "Functions" combines 3 operations with fundamentally different user workflows
 
-**Solution proposée par la communauté :** Fusionner "capabilities", "tools" et "tool servers" sous "tools" unifié avec sous-catégories. Désagréger "Functions" en catégories nommées distinctes.
+**Proposed community solution:** Merge "capabilities", "tools", and "tool servers" under unified "tools" with subcategories. Disaggregate "Functions" into distinct named categories.
 
-> Source : https://github.com/open-webui/open-webui/discussions/16415 — consultée le 13/04/2026
+> Source: https://github.com/open-webui/open-webui/discussions/16415 — consulted 04/13/2026

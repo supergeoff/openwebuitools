@@ -1,31 +1,31 @@
-# Développement, test et débogage
+# Development, Testing and Debugging
 
-## Méthodes de déploiement
+## Deployment Methods
 
-### 1. Éditeur de code direct
+### 1. Direct Code Editor
 
-Copier le code Python directement dans le workspace Open WebUI (Admin Panel → Workspace → Tools/Functions).
+Copy Python code directly into the Open WebUI workspace (Admin Panel → Workspace → Tools/Functions).
 
-### 2. Marketplace communautaire
+### 2. Community Marketplace
 
-Importer depuis `openwebui.com/t/<username>` (Tools) ou `openwebui.com/f/<username>` (Functions).
+Import from `openwebui.com/t/<username>` (Tools) or `openwebui.com/f/<username>` (Functions).
 
-> Source : Article Medium "Optimize Open WebUI" — consultée le 13/04/2026
+> Source: Medium article "Optimize Open WebUI" — consulted 04/13/2026
 
-### 3. Fichiers JSON
+### 3. JSON Files
 
-Convertir le fichier `.py` en format `.json` pour upload.
+Convert the `.py` file to `.json` format for upload.
 
-### 4. Pré-chargement avant premier démarrage (avancé)
+### 4. Pre-loading Before First Startup (advanced)
 
-Script d'entrypoint Docker qui :
-1. Attend le démarrage d'Open WebUI
-2. Crée l'admin via API signup
-3. Enregistre les fonctions via `POST /api/v1/functions/create`
+Docker entrypoint script that:
+1. Waits for Open WebUI to start
+2. Creates admin via API signup
+3. Registers functions via `POST /api/v1/functions/create`
 
-> **Note :** L'endpoint `/api/v1/functions/create` n'est pas listé dans la documentation API officielle.
+> **Note:** The `/api/v1/functions/create` endpoint is not listed in the official API documentation.
 
-**Structure de déploiement :**
+**Deployment structure:**
 ```
 ├── webui/
 │   ├── configs/
@@ -37,13 +37,13 @@ Script d'entrypoint Docker qui :
 └── docker-compose.yml
 ```
 
-> Source : Discussion GitHub #8955 — consultée le 13/04/2026
+> Source: GitHub Discussion #8955 — consulted 04/13/2026
 
-### Problème montage config.json
+### config.json Mount Problem
 
-Monter directement `config.json` via volume Docker cause `OSError: [Errno 16] Device or resource busy` — l'application fait un `os.rename` incompatible avec les mounts. **Contournement :** utiliser le mécanisme de copie dans l'entrypoint plutôt que le montage direct de fichiers.
+Mounting `config.json` directly via Docker volume causes `OSError: [Errno 16] Device or resource busy` — the application does an `os.rename` incompatible with mounts. **Workaround:** use the copy mechanism in the entrypoint rather than direct file mounting.
 
-## Configuration Docker pour la persistance
+## Docker Configuration for Persistence
 
 ```bash
 docker run -d -p 3000:8080 --gpus all \
@@ -53,65 +53,65 @@ docker run -d -p 3000:8080 --gpus all \
   --name open-webui ghcr.io/open-webui/open-webui:cuda
 ```
 
-Le bind mount "enables data exchange between isolated container and host system" — nécessaire pour que les extensions persistent des fichiers localement.
+The bind mount "enables data exchange between isolated container and host system" — necessary for extensions to persist files locally.
 
-> Source : Article Medium "Optimize Open WebUI" — consultée le 13/04/2026
+> Source: Medium article "Optimize Open WebUI" — consulted 04/13/2026
 
-## Erreurs fréquentes et solutions
+## Common Errors and Solutions
 
-| Problème | Cause | Solution |
+| Problem | Cause | Solution |
 |----------|-------|----------|
-| "Something went wrong :/ list index out of range" | Docstrings ou type hints manquants | Ajouter docstrings Sphinx-style complets et type hints |
-| Tool jamais appelé par le modèle | Tool non activé pour le modèle | Activer dans workspace model settings |
-| Tool absent de l'UI | Corruption du volume Docker | Reset du volume Docker (pas seulement le conteneur) |
-| Tool appelé mais ne retourne rien | Modèle trop faible | Utiliser un modèle plus puissant (gpt-4o, Llama 3.1) |
-| ImportError pour les packages | Dépendances non installées | Ajouter au frontmatter `requirements:` |
-| `KeyError: 'type'` | Types complexes dans les signatures | Utiliser uniquement `str`, `int`, `float`, `bool` |
-| Action supprime le message | `return body` au lieu de `return None` | Toujours retourner `None` depuis une Action |
-| Caractères corrompus dans status descriptions | Bug i18n après v0.5.0 | Éviter les caractères spéciaux ou vérifier le rendu |
-| __event_emitter__ ne fonctionne pas | Typé `None` au lieu de `Callable` | Utiliser `__event_emitter__=None` ou omettre le type |
+| "Something went wrong :/ list index out of range" | Missing docstrings or type hints | Add complete Sphinx-style docstrings and type hints |
+| Tool never called by model | Tool not enabled for the model | Enable in workspace model settings |
+| Tool missing from UI | Docker volume corruption | Reset Docker volume (not just the container) |
+| Tool called but returns nothing | Model too weak | Use a more powerful model (gpt-4o, Llama 3.1) |
+| ImportError for packages | Dependencies not installed | Add to frontmatter `requirements:` |
+| `KeyError: 'type'` | Complex types in signatures | Use only `str`, `int`, `float`, `bool` |
+| Action deletes message | `return body` instead of `return None` | Always return `None` from an Action |
+| Corrupted characters in status descriptions | i18n bug after v0.5.0 | Avoid special characters or check rendering |
+| __event_emitter__ not working | Typed `None` instead of `Callable` | Use `__event_emitter__=None` or omit the type |
 
-> Source : Discussion GitHub #3134 + Issues diverses — consultées le 13/04/2026
+> Source: GitHub Discussion #3134 + Various Issues — consulted 04/13/2026
 
-## Débogage
+## Debugging
 
-### Logs Docker
+### Docker Logs
 
 ```bash
 docker logs open-webui
 ```
 
-### Patterns de debugging recommandés
+### Recommended Debugging Patterns
 
-1. **Commencer simple** : tester avec des prompts directs ("Tell the LLM to use it")
-2. **Consulter les logs** pour les détails d'exécution
-3. **Vérifier les docstrings** : cause #1 d'erreurs silencieuses
-4. **Vérifier les type hints** : uniquement `str`, `int`, `float`, `bool`
-5. **Tester le mode Default d'abord** avant le mode Native
+1. **Start simple:** test with direct prompts ("Tell the LLM to use it")
+2. **Consult logs** for execution details
+3. **Check docstrings:** cause #1 of silent errors
+4. **Check type hints:** only `str`, `int`, `float`, `bool`
+5. **Test Default mode first** before Native mode
 
-### Options pip supplémentaires
+### Additional pip Options
 
-La variable d'environnement `PIP_OPTIONS` permet de contrôler le comportement de pip install pour les packages frontmatter :
+The `PIP_OPTIONS` environment variable controls pip install behavior for frontmatter packages:
 
 ```bash
 PIP_OPTIONS="--upgrade --no-cache-dir"
 ```
 
-## Bonnes pratiques communautaires
+## Community Best Practices
 
-1. **Toujours inclure des docstrings** — "Without a docstring the calling LLM doesn't know what the function is for."
-2. **Type hints obligatoires** sur tous les paramètres et retours (primitifs uniquement)
-3. **Gestion d'erreurs** : wraper la logique dans try-except retournant des chaînes d'erreur significatives
-4. **Tester localement** avant déploiement production
-5. **Support async** : utiliser `async`/`await` pour les opérations réseau
-6. **Limitation des résultats** pour ne pas surcharger le LLM
-7. **`self.citation = True`** pour afficher le contexte des outils
+1. **Always include docstrings** — "Without a docstring the calling LLM doesn't know what the function is for."
+2. **Mandatory type hints** on all parameters and returns (primitives only)
+3. **Error handling:** wrap logic in try-except returning meaningful error strings
+4. **Test locally** before production deployment
+5. **Async support:** use `async`/`await` for network operations
+6. **Result limitation** to avoid overwhelming the LLM
+7. **`self.citation = True`** to display tool context
 
-> Source : Discussion GitHub #3134 — consultée le 13/04/2026
+> Source: GitHub Discussion #3134 — consulted 04/13/2026
 
-## Tool skeleton template
+## Tool Skeleton Template
 
-Le dépôt [open-webui-tool-skeleton](https://github.com/pahautelman/open-webui-tool-skeleton) propose un template de départ avec une classe utilitaire `EventEmitter` :
+The [open-webui-tool-skeleton](https://github.com/pahautelman/open-webui-tool-skeleton) repository offers a starting template with an `EventEmitter` utility class:
 
 ```python
 class EventEmitter:
@@ -139,22 +139,22 @@ class EventEmitter:
         })
 ```
 
-**Bonnes pratiques du template :**
+**Template best practices:**
 
-| Pratique | Détail |
+| Practice | Detail |
 |----------|--------|
 | Documentation | "Clear, detailed docstrings are the primary mechanism through which language models understand tool capabilities" |
-| Design | Chaque méthode doit gérer une tâche spécifique et ciblée |
-| Gestion d'erreurs | Gérer gracieusement les échecs API, inputs invalides, problèmes réseau via EventEmitter |
-| Dépendances | Lister méticuleusement tous les packages externes dans le champ requirements |
-| Sécurité | Valider et assainir tous les inputs fournis par le LLM ; restreindre les permissions |
+| Design | Each method should handle a specific, focused task |
+| Error handling | Gracefully handle API failures, invalid inputs, network problems via EventEmitter |
+| Dependencies | Meticulously list all external packages in the requirements field |
+| Security | Validate and sanitize all inputs provided by the LLM; restrict permissions |
 
-> Source : https://github.com/pahautelman/open-webui-tool-skeleton — consultée le 13/04/2026
+> Source: https://github.com/pahautelman/open-webui-tool-skeleton — consulted 04/13/2026
 
-## Modèles recommandés pour le function calling
+## Recommended Models for Function Calling
 
-| Modèle | Mode recommandé |
-|--------|----------------|
+| Model | Recommended Mode |
+|-------|----------------|
 | GPT-4o / GPT-5 | Default + Native |
 | Claude 4.5 Sonnet | Default + Native |
 | Gemini 3 Flash | Default + Native |
@@ -162,4 +162,4 @@ class EventEmitter:
 | Llama 3.1-GROQ | Default |
 | mistral-small:22b-instruct | Default |
 
-Les modèles Llama 3 8B standard sont **connus pour être peu fiables** avec le tool calling natif (Issue #9414). Le mode Default est plus tolérant avec les modèles moins puissants.
+Standard Llama 3 8B models are **known to be unreliable** with native tool calling (Issue #9414). Default mode is more tolerant with less powerful models.

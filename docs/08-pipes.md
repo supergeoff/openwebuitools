@@ -1,8 +1,8 @@
-# Créer un Pipe (modèle/agent custom)
+# Creating a Pipe (custom model/agent)
 
-Un Pipe Function se présente comme un **modèle autonome** dans l'interface Open WebUI. L'utilisateur le sélectionne comme n'importe quel autre modèle, et le Pipe traite la requête avec sa logique custom.
+A Pipe Function appears as a **standalone model** in the Open WebUI interface. The user selects it like any other model, and the Pipe processes the request with its custom logic.
 
-## Structure de base
+## Basic Structure
 
 ```python
 from pydantic import BaseModel, Field
@@ -27,52 +27,52 @@ class Pipe:
         pass
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/pipe/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/pipe/ — consulted 04/13/2026
 
-## Méthode `pipe()`
+## The `pipe()` Method
 
-C'est la méthode principale appelée quand l'utilisateur envoie un message au modèle Pipe.
+This is the main method called when the user sends a message to the Pipe model.
 
-### Paramètres
+### Parameters
 
-| Paramètre | Type | Obligatoire | Description |
+| Parameter | Type | Required | Description |
 |-----------|------|-------------|-------------|
-| `body` | dict | Oui | Payload de la requête (model, stream, messages, etc.) |
-| `__user__` | dict | Non | Informations utilisateur |
-| `__request__` | Request | **Oui depuis 0.5.0** | Objet Request FastAPI |
-| `__event_emitter__` | Callable | Non | Communication one-way vers le frontend |
-| `__event_call__` | Callable | Non | Communication bidirectionnelle avec l'utilisateur |
-| `__metadata__` | dict | Non | Métadonnées de contexte enrichies |
-| `__messages__` | list | Non | Liste des messages (identique à `body["messages"]`) |
-| `__files__` | list | Non | Liste d'objets fichiers |
-| `__model__` | dict | Non | Objet modèle complet |
-| `__tools__` | list | Non | Liste d'instances ToolUserModel (pour appeler d'autres outils) |
-| `__chat_id__` | str | Non | UUID de la conversation |
-| `__session_id__` | str | Non | Identifiant de session |
-| `__message_id__` | str | Non | Identifiant du message courant |
+| `body` | dict | Yes | Request payload (model, stream, messages, etc.) |
+| `__user__` | dict | No | User information |
+| `__request__` | Request | **Yes since 0.5.0** | FastAPI Request object |
+| `__event_emitter__` | Callable | No | One-way communication to frontend |
+| `__event_call__` | Callable | No | Bidirectional communication with user |
+| `__metadata__` | dict | No | Enriched context metadata |
+| `__messages__` | list | No | List of messages (identical to `body["messages"]`) |
+| `__files__` | list | No | List of file objects |
+| `__model__` | dict | No | Complete model object |
+| `__tools__` | list | No | List of ToolUserModel instances (to call other tools) |
+| `__chat_id__` | str | No | Conversation UUID |
+| `__session_id__` | str | No | Session identifier |
+| `__message_id__` | str | No | Current message identifier |
 
-> **Breaking change v0.5.0 :** `__request__` est devenu obligatoire. Sans lui, les appels à `generate_chat_completion` et autres fonctions internes ne fonctionneront pas.
+> **Breaking change v0.5.0:** `__request__` has become mandatory. Without it, calls to `generate_chat_completion` and other internal functions will not work.
 
-### Retour
+### Return
 
-La méthode `pipe()` peut retourner :
-- `str` — réponse texte simple
-- `Generator` / `Iterator` — pour le streaming
-- `AsyncGenerator` — pour le streaming async
-- Dict au format OpenAI chat completion
+The `pipe()` method can return:
+- `str` — simple text response
+- `Generator` / `Iterator` — for streaming
+- `AsyncGenerator` — for async streaming
+- Dict in OpenAI chat completion format
 
 ### Streaming
 
 ```python
 if body.get("stream", False):
-    return r.iter_lines()  # Iterator pour streaming
+    return r.iter_lines()  # Iterator for streaming
 else:
-    return r.json()  # Réponse complète
+    return r.json()  # Full response
 ```
 
-## Méthode `pipes()` — Pattern Manifold
+## The `pipes()` Method — Manifold Pattern
 
-La méthode `pipes()` retourne une liste de modèles. Chaque entrée apparaît comme un modèle sélectionnable dans l'interface. Le modèle sélectionné est routé via `body["model"]`.
+The `pipes()` method returns a list of models. Each entry appears as a selectable model in the interface. The selected model is routed via `body["model"]`.
 
 ```python
 def pipes(self) -> list:
@@ -82,15 +82,15 @@ def pipes(self) -> list:
     ]
 ```
 
-L'ID du modèle sélectionné est disponible dans `body["model"]` sous la forme `pipe_id.sub_id` (ex: `my_pipe.model-1`).
+The selected model ID is available in `body["model"]` as `pipe_id.sub_id` (e.g., `my_pipe.model-1`).
 
-### Pipe sans `pipes()`
+### Pipe without `pipes()`
 
-Si la méthode `pipes()` n'est pas définie, le Pipe apparaît dans l'UI comme un **modèle unique** avec le nom du Pipe (`self.name`). C'est le cas le plus simple pour un Pipe qui ne gère qu'un seul modèle.
+If the `pipes()` method is not defined, the Pipe appears in the UI as a **single model** with the Pipe name (`self.name`). This is the simplest case for a Pipe that only handles one model.
 
-### Utilisation de `__tools__` dans un Pipe
+### Using `__tools__` in a Pipe
 
-Un Pipe peut accéder aux outils disponibles via le paramètre `__tools__` pour appeler d'autres outils :
+A Pipe can access available tools via the `__tools__` parameter to call other tools:
 
 ```python
 async def pipe(self, body: dict, __tools__=None, __user__=None, __request__=None) -> str:
@@ -98,13 +98,13 @@ async def pipe(self, body: dict, __tools__=None, __user__=None, __request__=None
         for tool in __tools__:
             if tool.get("name") == "search_tool":
                 result = await tool["callable"]("search query")
-                # Utiliser le résultat...
+                # Use the result...
     return "Response based on tool output"
 ```
 
-> **Attention sécurité :** Pour les outils async, `tool["callable"]` est un `functools.partial` qui peut exposer des données sensibles. Voir [13-security.md](13-security.md).
+> **Security warning:** For async tools, `tool["callable"]` is a `functools.partial` that may expose sensitive data. See [13-security.md](13-security.md).
 
-### Manifold dans les Pipelines externes
+### Manifold in External Pipelines
 
 ```python
 class Pipeline:
@@ -122,31 +122,31 @@ class Pipeline:
         return f"{model_id} response to: {user_message}"
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/manifold_pipeline_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/manifold_pipeline_scaffold.py — consulted 04/13/2026
 
-## Accès aux fonctions internes Open WebUI
+## Accessing Open WebUI Internal Functions
 
-Un Pipe peut appeler des fonctions internes d'Open WebUI :
+A Pipe can call Open WebUI internal functions:
 
 ```python
 from open_webui.models.users import Users
 from open_webui.utils.chat import generate_chat_completion
 
-# v0.9.0+ : async
+# v0.9.0+: async
 user_obj = await Users.get_user_by_id(__user__["id"])
 result = await generate_chat_completion(__request__, body, user_obj)
 ```
 
-### Avant v0.9.0 (sync)
+### Before v0.9.0 (sync)
 
 ```python
 user_obj = Users.get_user_by_id(__user__["id"])
 result = await generate_chat_completion(__request__, body, user_obj)
 ```
 
-## Pipeline Scaffolds — Hooks de cycle de vie
+## Pipeline Scaffolds — Lifecycle Hooks
 
-Les Pipelines externes disposent de hooks supplémentaires :
+External Pipelines have additional hooks:
 
 ```python
 class Pipeline:
@@ -160,4 +160,4 @@ class Pipeline:
         pass
 ```
 
-> Source : https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/example_pipeline_scaffold.py — consultée le 13/04/2026
+> Source: https://github.com/open-webui/pipelines/blob/main/examples/scaffolds/example_pipeline_scaffold.py — consulted 04/13/2026

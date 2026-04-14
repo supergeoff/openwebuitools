@@ -1,24 +1,24 @@
 # Rich UI Embedding
 
-Le Rich UI Embedding permet d'afficher du contenu HTML interactif dans l'interface de chat via `HTMLResponse` avec un header `Content-Disposition: inline`. Le contenu est rendu dans un iframe sandboxé.
+Rich UI Embedding allows displaying interactive HTML content in the chat interface via `HTMLResponse` with a `Content-Disposition: inline` header. Content is rendered in a sandboxed iframe.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/rich-ui/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/rich-ui/ — consulted 04/13/2026
 
-## Disponibilité
+## Availability
 
-| Type | Rich UI supporté |
+| Type | Rich UI Supported |
 |------|-----------------|
 | Tools | ✅ |
 | Actions | ✅ |
 | Pipes | ❌ |
 | Filters | ❌ |
 
-## Position de rendu
+## Render Position
 
-- **Tools :** inline au tool call indicator
-- **Actions :** au-dessus du texte du message
+- **Tools:** inline at the tool call indicator
+- **Actions:** above message text
 
-## Implémentation Tool
+## Tool Implementation
 
 ```python
 from fastapi.responses import HTMLResponse
@@ -29,11 +29,11 @@ def create_visualization_tool(self, data: str) -> HTMLResponse:
     return HTMLResponse(content=html_content, headers=headers)
 ```
 
-## Fournir du contexte au LLM (tuple)
+## Providing Context to LLM (tuple)
 
-Par défaut, sans contexte custom, le LLM reçoit : "Tool name: Embedded UI result is active and visible to the user."
+By default, without custom context, the LLM receives: "Tool name: Embedded UI result is active and visible to the user."
 
-Pour fournir un contexte personnalisé au LLM :
+To provide custom context to the LLM:
 
 ```python
 def create_chart(self, data: str) -> tuple:
@@ -43,11 +43,11 @@ def create_chart(self, data: str) -> tuple:
     return HTMLResponse(content=html_content, headers=headers), result_context
 ```
 
-## Gestion hauteur iframe
+## Iframe Height Management
 
-L'iframe ne connaît pas sa propre hauteur. Deux approches :
+The iframe does not know its own height. Two approaches:
 
-### Via postMessage (recommandé quand allowSameOrigin est OFF)
+### Via postMessage (recommended when allowSameOrigin is OFF)
 
 ```javascript
 function reportHeight() {
@@ -60,73 +60,73 @@ new ResizeObserver(reportHeight).observe(document.body);
 
 ### Auto-resize (allowSameOrigin ON)
 
-Quand `allowSameOrigin` est activé, l'iframe peut communiquer directement avec le parent et s'auto-resize.
+When `allowSameOrigin` is enabled, the iframe can communicate directly with the parent and auto-resize.
 
 ## Sandbox
 
-### Flags toujours actifs
+### Always-active Flags
 
-- `allow-scripts` — Exécution JavaScript
+- `allow-scripts` — JavaScript execution
 - `allow-popups` — window.open()
-- `allow-downloads` — Téléchargements
+- `allow-downloads` — Downloads
 
-### Flags configurables par l'utilisateur (Settings → Interface)
+### User-configurable Flags (Settings → Interface)
 
 - **"Allow Iframe Same-Origin Access"** — allowSameOrigin
 - **"Allow Iframe Form Submissions"** — allowForms
 
-### allowSameOrigin OFF (défaut)
+### allowSameOrigin OFF (default)
 
-- Isolation complète
-- L'iframe ne peut pas accéder aux cookies/localStorage/DOM du parent
-- Requiert `postMessage` pour reporter la hauteur
-- Configuration la plus sûre
+- Complete isolation
+- Iframe cannot access parent's cookies/localStorage/DOM
+- Requires `postMessage` to report height
+- Safest configuration
 
 ### allowSameOrigin ON
 
-- L'iframe accède au contexte parent
-- Auto-resize sans script supplémentaire
-- Chart.js et Alpine.js **auto-injectés** si détectés dans le contenu HTML
-- Nécessite confiance dans le contenu embarqué
+- Iframe accesses parent context
+- Auto-resize without additional script
+- Chart.js and Alpine.js **auto-injected** if detected in HTML content
+- Requires trust in embedded content
 
-## Communication avancée
+## Advanced Communication
 
-### Injection d'arguments (`window.args`)
+### Argument Injection (`window.args`)
 
-Les Tools injectent automatiquement les paramètres dans `window.args`. Les Actions ne reçoivent PAS `window.args`.
+Tools automatically inject parameters into `window.args`. Actions do NOT receive `window.args`.
 
 ```javascript
 window.addEventListener('load', () => {
-    const args = window.args; // Paramètres JSON passés au tool
+    const args = window.args; // JSON parameters passed to the tool
 });
 ```
 
-### Soumission de prompt
+### Prompt Submission
 
-| Type | Comportement |
+| Type | Behavior |
 |------|-------------|
-| `input:prompt` | Remplit l'input sans soumettre |
-| `input:prompt:submit` | Remplit et soumet |
-| `action:submit` | Soumet le texte d'input courant |
+| `input:prompt` | Fills input without submitting |
+| `input:prompt:submit` | Fills and submits |
+| `action:submit` | Submits current input text |
 
 ```javascript
 parent.postMessage({ type: 'input:prompt:submit', text: 'Show summary' }, '*');
 ```
 
-Quand `allowSameOrigin` est OFF, `input:prompt:submit` affiche un dialogue de confirmation.
+When `allowSameOrigin` is OFF, `input:prompt:submit` displays a confirmation dialog.
 
 ## Rich UI vs Execute Event
 
 | Aspect | Rich UI Embed | Execute Event |
 |--------|---------------|---------------|
-| Environnement | Iframe sandboxé | Page principale (non sandboxé) |
-| Persistance | Sauvegardé dans l'historique | Éphémère, perdu au rechargement |
-| Accès page | Isolé par défaut | Accès complet DOM/cookies/storage |
-| Formulaires | Requiert allowForms | Toujours fonctionnel |
-| Meilleur usage | Dashboards persistants, graphiques | Interactions transitoires, téléchargements |
+| Environment | Sandboxed iframe | Main page (non-sandboxed) |
+| Persistence | Saved in history | Ephemeral, lost on reload |
+| Page access | Isolated by default | Full DOM/cookies/storage access |
+| Forms | Requires allowForms | Always functional |
+| Best use | Persistent dashboards, charts | Transient interactions, downloads |
 
-## Comportement au rechargement
+## Reload Behavior
 
-Quand un chat historique est rechargé, le contenu HTML du Rich UI embed est **re-rendu depuis le contenu sauvegardé en BDD** (dans les embeds du message). L'iframe est recréé avec le même HTML. Il n'y a pas de mise en cache spécifique — chaque rechargement reconstruit l'iframe à partir des données persistées.
+When a historical chat is reloaded, the HTML content of the Rich UI embed is **re-rendered from content saved in DB** (in the message's embeds). The iframe is recreated with the same HTML. There is no specific caching — each reload rebuilds the iframe from persisted data.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/rich-ui/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/rich-ui/ — consulted 04/13/2026

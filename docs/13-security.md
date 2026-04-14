@@ -1,63 +1,63 @@
-# Sécurité, limites et bonnes pratiques
+# Security, Limits and Best Practices
 
-## Exécution de code arbitraire
+## Arbitrary Code Execution
 
 "Workspace Tools and Functions execute arbitrary Python code on your server."
 
-**Équivalence shell :** "Granting a user the ability to create or import Tools is equivalent to giving them shell access."
+**Shell equivalence:** "Granting a user the ability to create or import Tools is equivalent to giving them shell access."
 
-**Restriction :** La création de fonctions/tools est restreinte aux administrateurs.
+**Restriction:** Function/tool creation is restricted to administrators.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consulted 04/13/2026
 
-## Répertoire de données
+## Data Directory
 
-Dans Docker : `/app/backend/data`
+In Docker: `/app/backend/data`
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/ — consulted 04/13/2026
 
-## Risques liés au JavaScript non sandboxé
+## Non-sandboxed JavaScript Risks
 
-Les événements `execute` (via `__event_call__` ou `__event_emitter__`) exécutent du JavaScript dans le **contexte de la page principale**, sans iframe sandbox :
+Execute events (via `__event_call__` or `__event_emitter__`) execute JavaScript in the **main page context**, without iframe sandbox:
 
 "JavaScript runs in main page context with full DOM, cookie, and localStorage access—no iframe sandboxing"
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/events — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/events — consulted 04/13/2026
 
-**Recommandation :** Ne jamais exécuter de code JavaScript non fiable via les événements execute. Préférer le Rich UI Embed (iframe sandboxé) pour le contenu HTML.
+**Recommendation:** Never execute untrusted JavaScript code via execute events. Prefer Rich UI Embed (sandboxed iframe) for HTML content.
 
-## Risques liés à allowSameOrigin pour les Rich UI embeds
+## allowSameOrigin Risks for Rich UI Embeds
 
-L'activation de `allowSameOrigin` (Settings → Interface → Allow Iframe Same-Origin Access) permet à l'iframe d'accéder aux cookies, localStorage et DOM du parent. **C'est un vecteur XSS si le contenu HTML embarqué n'est pas de confiance.**
+Enabling `allowSameOrigin` (Settings → Interface → Allow Iframe Same-Origin Access) allows the iframe to access parent's cookies, localStorage, and DOM. **This is an XSS vector if the embedded HTML content is not trusted.**
 
-**Recommandation :** Ne jamais activer `allowSameOrigin` avec du contenu provenant de sources non fiables.
+**Recommendation:** Never enable `allowSameOrigin` with content from untrusted sources.
 
-## Risques du flag Docker `--add-host`
+## Docker `--add-host` Flag Risks
 
-Le flag `--add-host=host.docker.internal:host-gateway` utilisé dans les commandes Docker Pipeline et Open WebUI permet au conteneur d'accéder aux services de la machine hôte. C'est un risque potentiel en production si le conteneur est compromis.
+The `--add-host=host.docker.internal:host-gateway` flag used in Pipeline and Open WebUI Docker commands allows the container to access host machine services. This is a potential risk in production if the container is compromised.
 
-**Recommandation :** En production, limiter l'accès réseau du conteneur et utiliser des réseaux Docker dédiés plutôt que l'accès hôte direct.
+**Recommendation:** In production, limit container network access and use dedicated Docker networks rather than direct host access.
 
-## Risques des Pipelines
+## Pipelines Risks
 
 "A malicious Pipeline could access your file system, exfiltrate data, mine cryptocurrency, or compromise your system."
 
-Les Pipelines s'exécutent dans leur propre conteneur mais ont un accès complet au système de fichiers et réseau de ce conteneur.
+Pipelines run in their own container but have full access to that container's filesystem and network.
 
-> Source : https://docs.openwebui.com/features/extensibility/pipelines/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/pipelines/ — consulted 04/13/2026
 
-## Fuite de données via `functools.partial` (Issue #16307)
+## Data Leakage via `functools.partial` (Issue #16307)
 
-**Problème :** Quand les méthodes d'un tool sont async et acceptent `__user__`/`__event_emitter__`, le dict `__tools__` passé aux pipes contient un `functools.partial` qui expose l'objet utilisateur complet et les données sensibles.
+**Problem:** When tool methods are async and accept `__user__`/`__event_emitter__`, the `__tools__` dict passed to pipes contains a `functools.partial` that exposes the complete user object and sensitive data.
 
-**Données exposées :** Clés API (`sk-...`), images de profil en base64, mots de passe d'outils email, configurations complètes des valves, paramètres système.
+**Exposed data:** API keys (`sk-...`), base64 profile images, email tool passwords, complete valve configurations, system parameters.
 
-**Comportement non-async (attendu) :**
+**Non-async behavior (expected):**
 ```python
 'callable': <function Tools.get_temperature at 0x7f2fbb1ac860>
 ```
 
-**Comportement async (problématique) :**
+**Async behavior (problematic):**
 ```python
 'callable': functools.partial(
     <bound method Tools.get_temperature>,
@@ -66,58 +66,58 @@ Les Pipelines s'exécutent dans leur propre conteneur mais ont un accès complet
 )
 ```
 
-**Statut :** Fermé comme "intended behaviour", mais les implications sécurité nécessitent reconsidération.
+**Status:** Closed as "intended behaviour", but security implications need reconsideration.
 
-**Recommandation :** Les implémentations de Pipe doivent **manuellement filtrer les données sensibles** avant d'envoyer les informations d'outils à des fournisseurs LLM externes. Le framework passe l'état interne complet via les closures partial.
+**Recommendation:** Pipe implementations must **manually filter sensitive data** before sending tool information to external LLM providers. The framework passes complete internal state via partial closures.
 
-> Source : Issue #16307 — consultée le 13/04/2026
+> Source: Issue #16307 — consulted 04/13/2026
 
-## Typage de `__event_emitter__`
+## `__event_emitter__` Typing
 
-Le typage doit être `Callable` ou omis (pour l'injection automatique), **jamais `None`** :
+Typing must be `Callable` or omitted (for automatic injection), **never `None`**:
 
 ```python
-# INCORRECT — casse l'injection
+# INCORRECT — breaks injection
 async def my_method(self, __event_emitter__: None):
 
 # CORRECT
 async def my_method(self, __event_emitter__=None):
 ```
 
-> Source : Issue #8168 — consultée le 13/04/2026
+> Source: Issue #8168 — consulted 04/13/2026
 
-## Pip install runtime — risques en production
+## pip install Runtime — Production Risks
 
-`ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=True` (défaut) permet l'installation arbitraire de packages par des outils tiers.
+`ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=True` (default) allows arbitrary package installation by third-party tools.
 
-**Risques :**
-- Installation de packages malveillants
-- Race conditions avec `UVICORN_WORKERS > 1` ou replicas multiples (pip locking)
-- UI non responsive pendant l'installation
+**Risks:**
+- Installation of malicious packages
+- Race conditions with `UVICORN_WORKERS > 1` or multiple replicas (pip locking)
+- UI unresponsive during installation
 
-**Recommandation production :**
+**Production recommendation:**
 
 ```bash
 ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=False
 ```
 
-Pré-installer via Dockerfile :
+Pre-install via Dockerfile:
 
 ```dockerfile
 FROM ghcr.io/open-webui/open-webui:main
 RUN pip install --no-cache-dir python-docx requests beautifulsoup4
 ```
 
-> Source : Context7 (/open-webui/docs) — consultée le 13/04/2026
+> Source: Context7 (/open-webui/docs) — consulted 04/13/2026
 
-## Recommandations de sécurité
+## Security Recommendations
 
-1. **Restreindre la création de Tools/Functions aux administrateurs** — configuration par défaut, à maintenir
-2. **Ne jamais installer d'outils depuis des sources non fiables** — toujours revoir le code avant import
-3. **Désactiver le pip install runtime en production**
-4. **Filtrer manuellement les données sensibles** dans les Pipes avant envoi aux LLMs externes
-5. **Préférer le Rich UI Embed (iframe sandboxé)** aux événements execute pour le contenu HTML
-6. **Valider et assainir tous les inputs** fournis par le LLM
-7. **Restreindre les permissions** pour les opérations fichiers/commandes
-8. **Ne pas monter directement config.json** via volume Docker (provoque `OSError: [Errno 16]` via `os.rename`) — utiliser un script d'entrypoint à la place
-9. **En production, servir les OpenAPI tool servers en HTTPS** — les navigateurs bloquent les requêtes HTTP depuis des pages HTTPS
+1. **Restrict Tools/Functions creation to administrators** — default configuration, maintain it
+2. **Never install tools from untrusted sources** — always review code before import
+3. **Disable pip install runtime in production**
+4. **Manually filter sensitive data** in Pipes before sending to external LLMs
+5. **Prefer Rich UI Embed (sandboxed iframe)** over execute events for HTML content
+6. **Validate and sanitize all inputs** provided by the LLM
+7. **Restrict permissions** for file/command operations
+8. **Do not directly mount config.json** via Docker volume (causes `OSError: [Errno 16]` via `os.rename`) — use an entrypoint script instead
+9. **In production, serve OpenAPI tool servers over HTTPS** — browsers block HTTP requests from HTTPS pages

@@ -1,8 +1,8 @@
-# Créer un Tool (outil appelé par le LLM)
+# Creating a Tool (tool called by the LLM)
 
-Un Tool est un script Python exécuté dans l'environnement Open WebUI, appelé par le LLM via function calling. Le LLM décide quand et comment appeler les méthodes de votre Tool en fonction de leurs descriptions (docstrings) et de leurs signatures.
+A Tool is a Python script executed in the Open WebUI environment, called by the LLM via function calling. The LLM decides when and how to call your Tool's methods based on their descriptions (docstrings) and signatures.
 
-## Structure de base
+## Basic Structure
 
 ```python
 """
@@ -37,51 +37,51 @@ class Tools:
         return string[::-1]
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/development/ — consulted 04/13/2026
 
-## Exigences critiques
+## Critical Requirements
 
-### Type hints obligatoires
+### Mandatory Type Hints
 
-Chaque argument de méthode **doit** avoir un type hint. Le système utilise les type hints pour générer le JSON schema transmis au LLM.
+Every method argument **must** have a type hint. The system uses type hints to generate the JSON schema transmitted to the LLM.
 
-**Seuls 4 types primitifs sont supportés par le schema builder :** `str`, `int`, `float`, `bool`.
+**Only 4 primitive types are supported by the schema builder:** `str`, `int`, `float`, `bool`.
 
-Tout type complexe (`Optional[str]`, `Dict[str, Any]`, `Union[int, str]`, `List[...]`) provoque des erreurs silencieuses ou `KeyError: 'type'`.
+Any complex type (`Optional[str]`, `Dict[str, Any]`, `Union[int, str]`, `List[...]`) causes silent errors or `KeyError: 'type'`.
 
-> Source : Discussion GitHub #13174 — consultée le 13/04/2026
+> Source: GitHub Discussion #13174 — consulted 04/13/2026
 
-### Docstrings obligatoires
+### Mandatory Docstrings
 
-"Without a docstring the calling LLM doesn't know what the function is for." Les docstrings doivent décrire chaque paramètre avec la syntaxe `:param name: description`.
+"Without a docstring the calling LLM doesn't know what the function is for." Docstrings must describe each parameter with the syntax `:param name: description`.
 
-**Docstrings ou type hints manquants = "list index out of range" errors.**
+**Missing docstrings or type hints = "list index out of range" errors.**
 
-> Source : Discussion GitHub #3134 — consultée le 13/04/2026
+> Source: GitHub Discussion #3134 — consulted 04/13/2026
 
-### Méthodes async recommandées
+### Recommended Async Methods
 
-Les méthodes async sont recommandées pour la compatibilité future et les opérations réseau.
+Async methods are recommended for future compatibility and network operations.
 
-## Frontmatter (metadata en docstring)
+## Frontmatter (metadata in docstring)
 
-Le bloc triple-quote en tête de fichier définit les métadonnées du Tool :
+The triple-quote block at the top of the file defines the Tool's metadata:
 
-| Champ | Description |
+| Field | Description |
 |-------|-------------|
-| `title` | Nom affiché dans l'UI |
-| `author` | Créateur |
-| `author_url` | Lien optionnel vers le profil |
-| `git_url` | Lien optionnel vers le repo source |
-| `description` | Description brève |
-| `required_open_webui_version` | Version minimum requise |
-| `requirements` | Packages pip séparés par des virgules |
-| `version` | Version de l'outil |
-| `licence` | Licence de distribution |
+| `title` | Display name in UI |
+| `author` | Creator |
+| `author_url` | Optional link to profile |
+| `git_url` | Optional link to source repo |
+| `description` | Brief description |
+| `required_open_webui_version` | Minimum required version |
+| `requirements` | Pip packages separated by commas |
+| `version` | Tool version |
+| `licence` | Distribution license |
 
-## Gestion des packages externes
+## Managing External Packages
 
-### Installation automatique via frontmatter
+### Automatic Installation via Frontmatter
 
 ```python
 """
@@ -89,73 +89,73 @@ requirements: langchain-openai>=0.1.0,requests,beautifulsoup4
 """
 ```
 
-Le système installe automatiquement les packages listés dans `requirements:` via pip.
+The system automatically installs packages listed in `requirements:` via pip.
 
-**ATTENTION :** "When multiple tools define different versions of the same package... Open WebUI installs them in a non-deterministic order."
+**WARNING:** "When multiple tools define different versions of the same package... Open WebUI installs them in a non-deterministic order."
 
-### Production : désactiver le pip install runtime
+### Production: Disable Runtime pip install
 
-La variable `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS` (défaut: `True`) contrôle l'installation automatique.
+The `ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS` variable (default: `True`) controls automatic installation.
 
-**En production, il est fortement recommandé de la désactiver :**
+**In production, it is strongly recommended to disable it:**
 
 ```bash
 ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=False
 ```
 
-Raisons :
-- Empêche l'installation arbitraire de packages par des outils tiers
-- Élimine les race conditions quand `UVICORN_WORKERS > 1` ou replicas multiples
-- Assure des déploiements reproductibles
+Reasons:
+- Prevents arbitrary package installation by third-party tools
+- Eliminates race conditions when `UVICORN_WORKERS > 1` or multiple replicas
+- Ensures reproducible deployments
 
-**Alternative :** pré-installer les packages via Dockerfile :
+**Alternative:** Pre-install packages via Dockerfile:
 
 ```dockerfile
 FROM ghcr.io/open-webui/open-webui:main
 RUN pip install --no-cache-dir python-docx requests beautifulsoup4
 ```
 
-### Options pip supplémentaires
+### Additional pip Options
 
-La variable d'environnement `PIP_OPTIONS` permet de contrôler le comportement de pip install :
+The `PIP_OPTIONS` environment variable controls pip install behavior:
 
 ```bash
 PIP_OPTIONS="--upgrade --no-cache-dir"
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/development/ + Context7 — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/development/ + Context7 — consulted 04/13/2026
 
-## Modes de Tool Calling
+## Tool Calling Modes
 
 ### Default Mode (Legacy)
 
-- Injection dans le prompt
-- Compatibilité universelle
-- "Breaks KV cache" entre les tours
-- Ne supporte pas les system tools
+- Injection in the prompt
+- Universal compatibility
+- "Breaks KV cache" between turns
+- Does not support system tools
 
 ### Native Mode (Agentic)
 
-- Utilise la capacité native de function-calling du modèle
-- Définitions structurées, multi-step
-- Requiert modèles frontier (GPT-5, Claude 4.5 Sonnet, Gemini 3 Flash, MiniMax M2.5)
-- **INCOMPATIBILITÉ CRITIQUE :** "Message events (message, chat:message, chat:message:delta, replace) are BROKEN in Native mode because the server emits repeated content snapshots that overwrite tool-emitted updates."
+- Uses native function-calling capability of the model
+- Structured definitions, multi-step
+- Requires frontier models (GPT-5, Claude 4.5 Sonnet, Gemini 3 Flash, MiniMax M2.5)
+- **CRITICAL INCOMPATIBILITY:** "Message events (message, chat:message, chat:message:delta, replace) are BROKEN in Native mode because the server emits repeated content snapshots that overwrite tool-emitted updates."
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/ — consulted 04/13/2026
 
-### Compatibilité événements par mode
+### Event Compatibility by Mode
 
-| Type d'événement | Default Mode | Native Mode | Statut |
-|------------------|-------------|-------------|--------|
-| status | ✅ Complet | ✅ Identique | Compatible |
-| message | ✅ Complet | ❌ Cassé | Incompatible |
-| citation | ✅ Complet | ✅ Identique | Compatible |
-| notification | ✅ Complet | ✅ Identique | Compatible |
-| files | ✅ Complet | ✅ Identique | Compatible |
-| replace | ✅ Complet | ❌ Cassé | Incompatible |
-| chat:message:delta | ✅ Complet | ❌ Cassé | Incompatible |
+| Event Type | Default Mode | Native Mode | Status |
+|------------|-------------|-------------|--------|
+| status | ✅ Full | ✅ Identical | Compatible |
+| message | ✅ Full | ❌ Broken | Incompatible |
+| citation | ✅ Full | ✅ Identical | Compatible |
+| notification | ✅ Full | ✅ Identical | Compatible |
+| files | ✅ Full | ✅ Identical | Compatible |
+| replace | ✅ Full | ❌ Broken | Incompatible |
+| chat:message:delta | ✅ Full | ❌ Broken | Incompatible |
 
-### Pattern de détection du mode
+### Mode Detection Pattern
 
 ```python
 async def adaptive_tool(self, __event_emitter__=None, __metadata__=None) -> str:
@@ -165,41 +165,41 @@ async def adaptive_tool(self, __event_emitter__=None, __metadata__=None) -> str:
     is_native = (mode == "native")
 ```
 
-> **Note :** `function_calling` est une clé top-level dans `__metadata__`, pas sous `params`. On trouve aussi `__model__["info"]["params"]["function_calling"]` dans la structure du modèle.
+> **Note:** `function_calling` is a top-level key in `__metadata__`, not under `params`. You can also find `__model__["info"]["params"]["function_calling"]` in the model structure.
 
 ## `self.citation = True`
 
-Active l'affichage du contexte de l'outil dans les réponses du frontend. Mettre à `False` pour utiliser des citations custom via `__event_emitter__`.
+Enables display of tool context in frontend responses. Set to `False` to use custom citations via `__event_emitter__`.
 
 ```python
 class Tools:
     def __init__(self):
-        self.citation = True  # Affiche le contexte automatiquement
+        self.citation = True  # Automatically displays context
 ```
 
-> Source : Discussion GitHub #3134 — consultée le 13/04/2026
+> Source: GitHub Discussion #3134 — consulted 04/13/2026
 
-## Built-in System Tools (Native Mode uniquement)
+## Built-in System Tools (Native Mode Only)
 
-| Catégorie | Outils | Description |
-|-----------|--------|-------------|
-| Search & Web | `search_web`, `fetch_url` | Requêtes web, extraction contenu URL |
-| Knowledge Base | `list_knowledge`, `query_knowledge_files`, `view_file`, etc. | Navigation et extraction depuis les KB |
-| Memory | `search_memories`, `add_memory`, `delete_memory` | Gestion de la personnalisation |
-| Notes | `search_notes`, `write_note`, `view_note` | Opérations sur les notes utilisateur |
-| Chat History | `search_chats`, `view_chat` | Accès historique conversations |
-| Code Interpreter | `execute_code` | Exécution de code sandboxée |
-| Image Generation | `generate_image`, `edit_image` | Création et modification d'images |
-| Channels | `search_channels`, `view_channel_message` | Opérations sur les canaux |
-| Time Tools | `get_current_timestamp`, `calculate_timestamp` | Calculs temporels |
+| Category | Tools | Description |
+|----------|-------|-------------|
+| Search & Web | `search_web`, `fetch_url` | Web queries, URL content extraction |
+| Knowledge Base | `list_knowledge`, `query_knowledge_files`, `view_file`, etc. | KB navigation and extraction |
+| Memory | `search_memories`, `add_memory`, `delete_memory` | Personalization management |
+| Notes | `search_notes`, `write_note`, `view_note` | User notes operations |
+| Chat History | `search_chats`, `view_chat` | Conversation history access |
+| Code Interpreter | `execute_code` | Sandboxed code execution |
+| Image Generation | `generate_image`, `edit_image` | Image creation and modification |
+| Channels | `search_channels`, `view_channel_message` | Channel operations |
+| Time Tools | `get_current_timestamp`, `calculate_timestamp` | Time calculations |
 
-**Exemple de signature :** `query_knowledge_files(query, knowledge_ids?, count=5)` → Retourne `Array of {content, source, file_id, distance?}`
+**Example signature:** `query_knowledge_files(query, knowledge_ids?, count=5)` → Returns `Array of {content, source, file_id, distance?}`
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/ — consulted 04/13/2026
 
-## Exemples communautaires
+## Community Examples
 
-### Recherche web (DuckDuckGo)
+### Web Search (DuckDuckGo)
 
 ```python
 from duckduckgo_search import DDGS
@@ -221,7 +221,7 @@ class Tools:
             return f"Search error: {e}"
 ```
 
-### Heure courante
+### Current Time
 
 ```python
 from datetime import datetime
@@ -235,7 +235,7 @@ class Tools:
         return f"Current Date and Time = {current_date}, {current_time}"
 ```
 
-### Requête SQL (avec Valves)
+### SQL Query (with Valves)
 
 ```python
 import sqlite3
@@ -262,9 +262,9 @@ class Tools:
             return f"Error: {e}"
 ```
 
-> Source : Discussion GitHub #3134 — consultée le 13/04/2026
+> Source: GitHub Discussion #3134 — consulted 04/13/2026
 
-## Modèles recommandés pour le function calling
+## Recommended Models for Function Calling
 
 - GPT-4o / GPT-5 (OpenAI)
 - Claude 4.5 Sonnet (Anthropic)
@@ -272,6 +272,6 @@ class Tools:
 - Llama 3.1-GROQ
 - mistral-small:22b-instruct
 
-Les modèles faibles (Llama 3 8B standard) échouent souvent à sélectionner le bon outil. Le modèle doit être entraîné sur des patterns de function-calling pour invoquer les outils de manière fiable. Le mode natif de tool calling dépend fortement de la capacité du modèle (Issue #9414).
+Weak models (standard Llama 3 8B) often fail to select the correct tool. The model must be trained on function-calling patterns to reliably invoke tools. Native tool calling mode heavily depends on model capability (Issue #9414).
 
-> Source : Discussion GitHub #3134 + Issue #9414 — consultée le 13/04/2026
+> Source: GitHub Discussion #3134 + Issue #9414 — consulted 04/13/2026

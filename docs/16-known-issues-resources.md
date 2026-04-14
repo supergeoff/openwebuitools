@@ -1,49 +1,49 @@
-# Problèmes connus et ressources communautaires
+# Known Issues and Community Resources
 
-## Bugs résolus (pour contexte historique)
+## Resolved Bugs (for historical context)
 
-| Bug | Version | Impact | Résolution | Issue |
+| Bug | Version | Impact | Resolution | Issue |
 |-----|---------|--------|------------|-------|
-| `__event_emitter__` cassé dans outlet | v0.5.2 | Pas d'émission d'événements depuis les filtres outlet | PR #8159 | #8168 |
-| `__event_emitter__` cassé dans Actions | ~v0.5.x | Exception `user_id` dans les Actions | PR #8246 | #8292 |
-| Caractères corrompus dans status | v0.5.0+ | Descriptions de status illisibles via i18n | Non documenté | #8129 |
-| Contenu outlet non persisté | v0.5.2 | Modifications outlet annulées après render | PR #8159 | #8168 |
-| `__event_emitter__` erreur pipe function | Mars 2025 | Erreurs lors de l'appel dans les pipes | Non résolu (?) | #11750 |
+| `__event_emitter__` broken in outlet | v0.5.2 | No event emission from outlet filters | PR #8159 | #8168 |
+| `__event_emitter__` broken in Actions | ~v0.5.x | `user_id` exception in Actions | PR #8246 | #8292 |
+| Corrupted characters in status | v0.5.0+ | Unreadable status descriptions via i18n | Not documented | #8129 |
+| Outlet content not persisted | v0.5.2 | Outlet modifications reverted after render | PR #8159 | #8168 |
+| `__event_emitter__` error in pipe function | March 2025 | Errors when calling in pipes | Not resolved (?) | #11750 |
 
-## Limitations actuelles non résolues
+## Current Unresolved Limitations
 
-| Limitation | Impact | Contournement | Source |
+| Limitation | Impact | Workaround | Source |
 |------------|--------|---------------|--------|
-| Type hints limités à `str`, `int`, `float`, `bool` | `KeyError: 'type'` avec types complexes (`Optional`, `Dict`, `List`, `Union`) | Simplifier toutes les signatures aux 4 primitifs | Discussion #13174 |
-| Async tools exposent données sensibles via `functools.partial` | Clés API, mots de passe visibles dans les logs de pipe | Filtrer manuellement les données avant envoi externe | Issue #16307 |
-| Native tool calling peu fiable avec petits modèles | Modèle ne traite pas le résultat du tool | Utiliser modèles frontier ou mode Default | Issue #9414 |
-| Citations multiples fusionnées | Citations distinctes agrégées en une seule | Utiliser des IDs vraiment distincts (mécanisme de groupement non clarifié) | Issue #17366 |
-| Event emitter/call indisponible pour outils externes (OpenAPI/MCP) | Pas de feedback temps réel depuis outils externes | Utiliser REST endpoint `/api/v1/chats/{chat_id}/messages/{message_id}/event` | Issue #20892 |
-| Duplication system prompt lors des tool calls agentic | Gaspillage de tokens, surcoût cache | Non documenté | Issue #19169 |
-| `outlet()` non appelé pour requêtes API directes | Pas de post-traitement pour clients API | Appeler manuellement `POST /api/chat/completed` | Doc officielle (Filter) |
-| Message events cassés en mode Native | `message`, `replace`, `chat:message:delta` écrasés par les snapshots serveur | Utiliser uniquement `status`, `citation`, `notification` en mode Native | Doc officielle (Tools dev) |
+| Type hints limited to `str`, `int`, `float`, `bool` | `KeyError: 'type'` with complex types (`Optional`, `Dict`, `List`, `Union`) | Simplify all signatures to the 4 primitives | Discussion #13174 |
+| Async tools expose sensitive data via `functools.partial` | API keys, passwords visible in pipe logs | Manually filter data before external sending | Issue #16307 |
+| Native tool calling unreliable with small models | Model doesn't process tool result | Use frontier models or Default mode | Issue #9414 |
+| Multiple citations merged | Distinct citations aggregated into one | Use truly distinct IDs (grouping mechanism not clarified) | Issue #17366 |
+| Event emitter/call unavailable for external tools (OpenAPI/MCP) | No real-time feedback from external tools | Use REST endpoint `/api/v1/chats/{chat_id}/messages/{message_id}/event` | Issue #20892 |
+| System prompt duplication during agentic tool calls | Token waste, cache extra cost | Not documented | Issue #19169 |
+| `outlet()` not called for direct API requests | No post-processing for API clients | Manually call `POST /api/chat/completed` | Official doc (Filter) |
+| Message events broken in Native mode | `message`, `replace`, `chat:message:delta` overwritten by server snapshots | Use only `status`, `citation`, `notification` in Native mode | Official doc (Tools dev) |
 
-## Demandes de fonctionnalités révélant les limites
+## Feature Requests Revealing Limitations
 
-| Feature request | Implication | Source |
+| Feature Request | Implication | Source |
 |-----------------|-------------|--------|
-| Support SSE pour status events des serveurs agentic | Les serveurs externes ne peuvent pas mettre à jour le status nativement | Issue #19250 |
-| Simplification de l'écosystème Tools/Functions | Confusion taxonomique reconnue par la communauté | Discussion #16415 |
-| Tâches planifiées en arrière-plan | Pas de support natif pour les fonctions programmées | Discussion #15832 |
-| MCP natif avec gestion des tools | Intégration MCP encore en évolution | Discussion #16238 |
+| SSE support for agentic server status events | External servers cannot natively update status | Issue #19250 |
+| Simplification of Tools/Functions ecosystem | Taxonomy confusion recognized by community | Discussion #16415 |
+| Scheduled background tasks | No native support for scheduled functions | Discussion #15832 |
+| Native MCP with tool management | MCP integration still evolving | Discussion #16238 |
 
 ---
 
-## Dépôts communautaires
+## Community Repositories
 
 ### owndev/Open-WebUI-Functions
 
-- **URL :** https://github.com/owndev/Open-WebUI-Functions
-- **Stars :** 336 / **Forks :** 51
-- **Licence :** Apache 2.0
-- **Description :** Collection de pipelines, filtres et intégrations (Azure AI, N8N, Google Gemini, Infomaniak)
+- **URL:** https://github.com/owndev/Open-WebUI-Functions
+- **Stars:** 336 / **Forks:** 51
+- **License:** Apache 2.0
+- **Description:** Collection of pipelines, filters and integrations (Azure AI, N8N, Google Gemini, Infomaniak)
 
-**Structure :**
+**Structure:**
 ```
 ├── docs/
 │   ├── azure-ai-citations.md
@@ -61,31 +61,31 @@
     └── n8n/
 ```
 
-**Patterns observés :** Configuration par variables d'environnement avec préfixes provider, chiffrement automatique des données sensibles (préfixe `encrypted:` dans les valves), support streaming/non-streaming systématique, token tracking via métadonnées.
+**Observed patterns:** Configuration via environment variables with provider prefixes, automatic encryption of sensitive data (prefix `encrypted:` in valves), systematic streaming/non-streaming support, token tracking via metadata.
 
 ### Haervwe/open-webui-tools
 
-- **URL :** https://github.com/Haervwe/open-webui-tools
-- **Version requise :** Open WebUI 0.6.0+ / Python 3.8+
-- **Licence :** MIT
-- **Description :** Toolkit modulaire : 20+ outils, pipes et filtres
+- **URL:** https://github.com/Haervwe/open-webui-tools
+- **Required version:** Open WebUI 0.6.0+ / Python 3.8+
+- **License:** MIT
+- **Description:** Modular toolkit: 20+ tools, pipes and filters
 
-**Outils notables :**
+**Notable tools:**
 
-| Type | Exemples |
+| Type | Examples |
 |------|---------|
 | Tools | arXiv Search, Perplexica Search, Pexels Media, YouTube, SearxNG Images, Image Generators (Native/HF/Cloudflare/ComfyUI), Video (ComfyUI/Google Veo), OpenWeatherMap |
 | Pipes | Planner Agent v3, Letta Agent, arXiv Research MCTS, Multi Model Conversations v2, Resume Analyzer, Perplexica Pipe, MiniMax LLM Pipe |
 | Filters | Doodle Paint, Prompt Enhancer, Semantic Router, Full Document, Clean Thinking Tags, OpenRouter WebSearch Citations |
 
-**Patterns observés :** `self.citation = True`, émission d'événements temps réel, gestion d'erreurs user-friendly, chaînage d'outils dans les Pipes, délégation multi-agents.
+**Observed patterns:** `self.citation = True`, real-time event emission, user-friendly error handling, tool chaining in Pipes, multi-agent delegation.
 
-### open-webui/pipelines (officiel)
+### open-webui/pipelines (official)
 
-- **URL :** https://github.com/open-webui/pipelines
-- **Exemples :** `examples/` avec sous-dossiers `filters/` (16 fichiers), `pipelines/` (integrations, providers, rag), `scaffolds/` (4 templates)
+- **URL:** https://github.com/open-webui/pipelines
+- **Examples:** `examples/` with subfolders `filters/` (16 files), `pipelines/` (integrations, providers, rag), `scaffolds/` (4 templates)
 
-**Filtres exemples (16) :**
+**Example filters (16):**
 
 1. conversation_turn_limit_filter.py
 2. datadog_filter_pipeline.py
@@ -101,55 +101,55 @@
 12. llmguard_prompt_injection_filter_pipeline.py
 13. mem0_memory_filter_pipeline.py
 14. opik_filter_pipeline.py
-15. presidio_filter_pipeline.py (anonymisation PII)
+15. presidio_filter_pipeline.py (PII anonymization)
 16. rate_limit_filter_pipeline.py
 
-**Scaffolds (4) :**
+**Scaffolds (4):**
 
-1. example_pipeline_scaffold.py — Pipeline basique avec lifecycle hooks
-2. filter_pipeline_scaffold.py — Filtre avec valve `pipelines` et `self.type = "filter"`
-3. function_calling_scaffold.py — Pipeline avec support function calling (`self.type = "manifold"`)
-4. manifold_pipeline_scaffold.py — Manifold avec sous-modèles multiples
+1. example_pipeline_scaffold.py — Basic pipeline with lifecycle hooks
+2. filter_pipeline_scaffold.py — Filter with `pipelines` valve and `self.type = "filter"`
+3. function_calling_scaffold.py — Pipeline with function calling support (`self.type = "manifold"`)
+4. manifold_pipeline_scaffold.py — Manifold with multiple sub-models
 
-> Voir [03-architecture-lifecycle.md](03-architecture-lifecycle.md) pour le code source des scaffolds.
+> See [03-architecture-lifecycle.md](03-architecture-lifecycle.md) for scaffold source code.
 
-### open-webui/openapi-servers (officiel)
+### open-webui/openapi-servers (official)
 
-- **URL :** https://github.com/open-webui/openapi-servers
-- **Description :** Serveurs d'outils OpenAPI de référence (filesystem, memory, time)
-- **Licence :** MIT
+- **URL:** https://github.com/open-webui/openapi-servers
+- **Description:** Reference OpenAPI tool servers (filesystem, memory, time)
+- **License:** MIT
 
 ### pahautelman/open-webui-tool-skeleton
 
-- **URL :** https://github.com/pahautelman/open-webui-tool-skeleton
-- **Stars :** 10 / **Forks :** 2
-- **Licence :** MIT
-- **Description :** Template fondationnel avec classe EventEmitter helper
+- **URL:** https://github.com/pahautelman/open-webui-tool-skeleton
+- **Stars:** 10 / **Forks:** 2
+- **License:** MIT
+- **Description:** Foundational template with EventEmitter helper class
 
-> Voir [14-development-debugging.md](14-development-debugging.md) pour le code du template.
+> See [14-development-debugging.md](14-development-debugging.md) for template code.
 
-## Bibliothèque communautaire
+## Community Library
 
-- **URL :** https://openwebui.com/functions
-- **Volume :** 541 fonctions uniques, 276 outils uniques (sources secondaires)
-- **Statut au moment de la collecte :** HTTP 403 sur toutes les pages testées
+- **URL:** https://openwebui.com/functions
+- **Volume:** 541 unique functions, 276 unique tools (secondary sources)
+- **Status at time of collection:** HTTP 403 on all tested pages
 
-## Données non collectées
+## Not Collected Data
 
-| Donnée | Statut | Commentaire |
-|--------|--------|-------------|
-| Discord Open WebUI | Inaccessible | Requiert authentification, contenu éphémère non indexable |
-| Article Medium "Beyond Text" (contenu complet) | Paywall | Seuls métadonnées et sommaire collectés. Blog personnel en 404. |
-| Contenu des sous-dossiers pipelines/examples/pipelines/ | Structure identifiée | Code source non extrait en détail |
-| Changelog complet des releases | Non collecté | v0.8.12 identifiée mais changelog détaillé non parcouru |
+| Data | Status | Comment |
+|------|--------|-------------|
+| Discord Open WebUI | Inaccessible | Requires authentication, ephemeral non-indexable content |
+| Medium article "Beyond Text" (full content) | Paywall | Only metadata and table of contents collected. Personal blog on 404. |
+| Content of pipelines/examples/pipelines/ subfolders | Structure identified | Source code not extracted in detail |
+| Complete releases changelog | Not collected | v0.8.12 identified but detailed changelog not traversed |
 
-## Lacunes de collecte connues
+## Known Collection Gaps
 
-| Source | Lacune | Impact |
+| Source | Gap | Impact |
 |--------|--------|--------|
-| DeepWiki (source IA) | Mécanisme exec/eval, hot-reload, gestion erreurs, versionnage | Non vérifiable — voir avertissement dans 03-architecture-lifecycle.md |
-| Article Medium "Beyond Text" | Contenu technique complet | Paywall — non collectable, seuls métadonnées et sommaire disponibles |
-| open-webui/openapi-servers | Contenu des serveurs (filesystem, memory) | Seul le time server est documenté en quickstart |
-| Issue #11750 | Détails complets | Marquée comme non résolu, contexte partiellement collecté |
-| owndev/Open-WebUI-Functions | Patterns Azure AI, chiffrement clés, BM25+semantic rerank | Résumé haut niveau uniquement — les patterns spécifiques ne sont pas détaillés |
-| Haervwe/open-webui-tools | Architecture Planner Agent v3, Letta Agent | Noms listés mais architecture non détaillée |
+| DeepWiki (AI source) | exec/eval mechanism, hot-reload, error handling, versioning | Not verifiable — see warning in 03-architecture-lifecycle.md |
+| Medium article "Beyond Text" | Complete technical content | Paywall — not collectable, only metadata and table of contents available |
+| open-webui/openapi-servers | Server content (filesystem, memory) | Only the time server documented in quickstart |
+| Issue #11750 | Complete details | Marked as unresolved, partially collected context |
+| owndev/Open-WebUI-Functions | Azure AI patterns, key encryption, BM25+semantic rerank | High-level summary only — specific patterns not detailed |
+| Haervwe/open-webui-tools | Planner Agent v3, Letta Agent architecture | Names listed but architecture not detailed |

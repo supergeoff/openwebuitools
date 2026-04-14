@@ -1,32 +1,32 @@
-# Système de Valves
+# Valve System
 
-Les Valves sont le mécanisme central de configuration dynamique des extensions. Elles héritent de `pydantic.BaseModel` et génèrent automatiquement des champs GUI dans l'interface d'administration.
+Valves are the central mechanism for dynamic configuration of extensions. They inherit from `pydantic.BaseModel` and automatically generate GUI fields in the admin interface.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/valves — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/valves — consulted 04/13/2026
 
 ## Valves vs UserValves
 
 | Aspect | Valves | UserValves |
 |--------|--------|------------|
-| Qui configure | Administrateurs uniquement (Tools/Functions menus) | Tout utilisateur depuis une session de chat |
-| Persistance | System-wide, accessibles à toutes les exécutions du plugin | Par utilisateur, stockées dans `user.settings.functions.valves[function_id]` |
-| Accès | `self.valves.field_name` | `__user__["valves"].field_name` |
-| Cas d'usage | Clés API, URLs de service, configuration globale | Préférences utilisateur, toggles personnels |
+| Who configures | Administrators only (Tools/Functions menus) | Any user from a chat session |
+| Persistence | System-wide, accessible to all plugin executions | Per user, stored in `user.settings.functions.valves[function_id]` |
+| Access | `self.valves.field_name` | `__user__["valves"].field_name` |
+| Use cases | API keys, service URLs, global configuration | User preferences, personal toggles |
 
-## Accès aux Valves — Attention au piège
+## Accessing Valves — Watch Out for the Trap
 
 ```python
-# CORRECT : accès via attribut
+# CORRECT: attribute access
 self.valves.api_key
 __user__["valves"].preference
 
-# INCORRECT : accès via dictionnaire retourne la valeur par défaut, pas la valeur réelle !
-__user__["valves"]["preference"]  # ← VALEUR PAR DÉFAUT, PAS LA VALEUR RÉELLE
+# INCORRECT: dictionary access returns default value, not actual value!
+__user__["valves"]["preference"]  # ← DEFAULT VALUE, NOT ACTUAL VALUE
 ```
 
-## Types de champs
+## Field Types
 
-### Types de base
+### Basic Types
 
 ```python
 from pydantic import BaseModel, Field
@@ -36,14 +36,14 @@ class Valves(BaseModel):
     # Integer
     test_valve: int = Field(default=4, description="...")
 
-    # Boolean (rendu comme switch dans l'UI)
+    # Boolean (rendered as switch in UI)
     test_user_valve: bool = Field(default=False, description="...")
 
-    # String avec choix limités
+    # String with limited choices
     choice_option: Literal["choiceA", "choiceB"] = Field(default="choiceA", description="...")
 ```
 
-### Champ mot de passe (masqué dans l'UI)
+### Password Field (hidden in UI)
 
 ```python
 service_password: str = Field(
@@ -53,7 +53,7 @@ service_password: str = Field(
 )
 ```
 
-### Dropdown select statique
+### Static Dropdown Select
 
 ```python
 log_level: str = Field(
@@ -73,9 +73,9 @@ log_level: str = Field(
 )
 ```
 
-### Dropdown select dynamique
+### Dynamic Dropdown Select
 
-Le nom de la méthode (string) est appelé dynamiquement pour peupler les options.
+The method name (string) is called dynamically to populate options.
 
 ```python
 selected_model: str = Field(
@@ -91,34 +91,34 @@ selected_model: str = Field(
 
 @classmethod
 def get_model_options(cls, __user__=None) -> list[dict]:
-    # __user__ est injecté automatiquement (comme un reserved arg)
-    # quand l'utilisateur ouvre les paramètres, sinon None
+    # __user__ is automatically injected (like a reserved arg)
+    # when the user opens the settings, otherwise None
     return [
         {"value": "gpt-4", "label": "GPT-4"},
         {"value": "gpt-3.5-turbo", "label": "GPT-3.5 Turbo"}
     ]
 ```
 
-### Champ requis
+### Required Field
 
 ```python
 api_key: str = Field(default="", description="API key", required=True)
 ```
 
-> **Validation `required=True` :** Côté UI, un champ requis vide affiche un avertissement visuel mais ne bloque pas l'exécution. Côté backend, la validation Pydantic s'applique uniquement si la valeur par défaut est absente — avec `default=""`, un champ vide passe la validation. Pour un vrai blocage, ne pas fournir de valeur par défaut.
+> **`required=True` validation:** On the UI side, an empty required field displays a visual warning but does not block execution. On the backend, Pydantic validation only applies if the default value is absent — with `default=""`, an empty field passes validation. For real blocking, do not provide a default value.
 
-## Champ priority
+## Priority Field
 
 ```python
 priority: int = Field(default=0, description="Lower values execute first")
 ```
 
-Les valeurs basses sont exécutées en premier. Ce champ contrôle :
+Lower values execute first. This field controls:
 
-- L'ordre d'exécution des Filters (inlet/outlet)
-- L'ordre d'affichage des boutons Action (priority ascending, puis alphabétique par function ID si égalité)
+- Execution order of Filters (inlet/outlet)
+- Display order of Action buttons (ascending priority, then alphabetical by function ID if equal)
 
-## Exemple complet
+## Complete Example
 
 ```python
 from pydantic import BaseModel, Field
@@ -151,12 +151,12 @@ class Tools:
         self.valves = self.Valves()
 ```
 
-## Mécanisme de persistance
+## Persistence Mechanism
 
 ### Valves (admin)
 
-Stockées dans la colonne `valves` (JSONField) de la table `function` ou `tool` correspondante. Lecture via `get_function_valves_by_id()` / outil équivalent, écriture via `update_function_valves_by_id()`. Accessibles à toutes les exécutions du plugin.
+Stored in the `valves` column (JSONField) of the corresponding `function` or `tool` table. Read via `get_function_valves_by_id()` / equivalent tool, write via `update_function_valves_by_id()`. Accessible to all plugin executions.
 
 ### UserValves
 
-Stockées dans `user.settings.functions.valves[function_id]` (JSON imbriqué dans les settings utilisateur). Lecture via `get_user_valves_by_id_and_user_id()`. Chaque utilisateur a ses propres valeurs, indépendantes les unes des autres.
+Stored in `user.settings.functions.valves[function_id]` (JSON nested in user settings). Read via `get_user_valves_by_id_and_user_id()`. Each user has their own values, independent of each other.

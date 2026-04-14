@@ -1,68 +1,68 @@
-# Système d'événements
+# Event System
 
-Le système d'événements permet la communication entre le backend (votre code Python) et le frontend (l'interface utilisateur). Deux mécanismes complémentaires existent.
+The event system enables communication between the backend (your Python code) and the frontend (the user interface). Two complementary mechanisms exist.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/events — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/events — consulted 04/13/2026
 
-## `__event_emitter__` — Communication one-way
+## `__event_emitter__` — One-way Communication
 
-Backend → Frontend. Envoi d'événements sans attendre de réponse.
+Backend → Frontend. Sending events without waiting for a response.
 
 ```python
 await __event_emitter__({"type": "event_type", "data": {...}})
 ```
 
-**Disponibilité :** Tools ✅, Actions ✅, Pipes ✅, Filters ✅
+**Availability:** Tools ✅, Actions ✅, Pipes ✅, Filters ✅
 
-## `__event_call__` — Communication bidirectionnelle
+## `__event_call__` — Bidirectional Communication
 
-Backend → Frontend → Backend. Attend la réponse de l'utilisateur.
+Backend → Frontend → Backend. Waits for user response.
 
-**Timeout par défaut :** 300 secondes (configurable via `WEBSOCKET_EVENT_CALLER_TIMEOUT`)
+**Default timeout:** 300 seconds (configurable via `WEBSOCKET_EVENT_CALLER_TIMEOUT`)
 
-**Disponibilité :** Tools ✅, Actions ✅, Pipes ✅, Filters ✅
+**Availability:** Tools ✅, Actions ✅, Pipes ✅, Filters ✅
 
-## Référence complète des types d'événements
+## Complete Event Types Reference
 
-| Type | Helper | Data Structure | Persisté en BDD |
+| Type | Helper | Data Structure | Persisted to DB |
 |------|--------|----------------|------------------|
-| `status` | `__event_emitter__` | `{description: str, done: bool, hidden: bool}` | Oui (statusHistory) |
-| `chat:message:delta` / `message` | `__event_emitter__` | `{content: str}` | `message` oui (content), `chat:message:delta` non |
-| `chat:message` / `replace` | `__event_emitter__` | `{content: str}` | `replace` oui (content, écrase), `chat:message` non |
-| `files` / `chat:message:files` | `__event_emitter__` | `{files: [...]}` | `files` oui |
-| `chat:title` | `__event_emitter__` | `{title: str}` | Non (Socket.IO only) |
-| `chat:tags` | `__event_emitter__` | `{tags: [...]}` | Non (Socket.IO only) |
-| `source` / `citation` | `__event_emitter__` | Open WebUI Source/Citation Object (voir § Citations ci-dessous) | Oui (sources) |
-| `embeds` / `chat:message:embeds` | `__event_emitter__` | `{embeds: [...]}` | `embeds` oui |
-| `notification` | `__event_emitter__` | `{type: "info"\|"success"\|"warning"\|"error", content: str}` | Non (Socket.IO only) |
-| `chat:message:error` | `__event_emitter__` | `{error: str}` | Non (Socket.IO only) |
-| `chat:message:follow_ups` | `__event_emitter__` | `{follow_ups: [...]}` | Non (Socket.IO only) |
-| `confirmation` | `__event_call__` | `{title: str, message: str}` | N/A (requiert connexion live) |
-| `input` | `__event_call__` | `{title: str, message: str, placeholder: str, value: any, type: "password"\|optional}` | N/A (requiert connexion live) |
-| `execute` | Les deux | `{code: "...javascript..."}` | Non |
-| `chat:message:favorite` | `__event_emitter__` | `{favorite: bool}` | Non (Socket.IO only) |
-| `chat:completion` | `__event_emitter__` | Custom | Non (Socket.IO only) |
+| `status` | `__event_emitter__` | `{description: str, done: bool, hidden: bool}` | Yes (statusHistory) |
+| `chat:message:delta` / `message` | `__event_emitter__` | `{content: str}` | `message` yes (content), `chat:message:delta` no |
+| `chat:message` / `replace` | `__event_emitter__` | `{content: str}` | `replace` yes (content, overwrites), `chat:message` no |
+| `files` / `chat:message:files` | `__event_emitter__` | `{files: [...]}` | `files` yes |
+| `chat:title` | `__event_emitter__` | `{title: str}` | No (Socket.IO only) |
+| `chat:tags` | `__event_emitter__` | `{tags: [...]}` | No (Socket.IO only) |
+| `source` / `citation` | `__event_emitter__` | Open WebUI Source/Citation Object (see Citations section below) | Yes (sources) |
+| `embeds` / `chat:message:embeds` | `__event_emitter__` | `{embeds: [...]}` | `embeds` yes |
+| `notification` | `__event_emitter__` | `{type: "info"|"success"|"warning"|"error", content: str}` | No (Socket.IO only) |
+| `chat:message:error` | `__event_emitter__` | `{error: str}` | No (Socket.IO only) |
+| `chat:message:follow_ups` | `__event_emitter__` | `{follow_ups: [...]}` | No (Socket.IO only) |
+| `confirmation` | `__event_call__` | `{title: str, message: str}` | N/A (requires live connection) |
+| `input` | `__event_call__` | `{title: str, message: str, placeholder: str, value: any, type: "password"|optional}` | N/A (requires live connection) |
+| `execute` | Both | `{code: "...javascript..."}` | No |
+| `chat:message:favorite` | `__event_emitter__` | `{favorite: bool}` | No (Socket.IO only) |
+| `chat:completion` | `__event_emitter__` | Custom | No (Socket.IO only) |
 
-## Persistance des événements
+## Event Persistence
 
-| Catégorie | Événements | Comportement |
-|-----------|-----------|-------------|
-| **Persistés en BDD** | `status` → statusHistory, `message` → content, `replace` → content (écrase), `embeds` → embeds, `files` → files, `source`/`citation` → sources | Survivent à la déconnexion |
-| **Non persistés** | `chat:completion`, `chat:message:delta`, `chat:message:error`, `chat:message:follow_ups`, `chat:message:favorite`, `chat:title`, `chat:tags`, `notification` | Socket.IO uniquement, perdus à la déconnexion |
-| **Requièrent connexion live** | `confirmation`, `input`, `execute` via `__event_call__` | Erreur si déconnecté, timeout 300s |
+| Category | Events | Behavior |
+|----------|--------|----------|
+| **Persisted to DB** | `status` → statusHistory, `message` → content, `replace` → content (overwrites), `embeds` → embeds, `files` → files, `source`/`citation` → sources | Survive disconnection |
+| **Not persisted** | `chat:completion`, `chat:message:delta`, `chat:message:error`, `chat:message:follow_ups`, `chat:message:favorite`, `chat:title`, `chat:tags`, `notification` | Socket.IO only, lost on disconnection |
+| **Require live connection** | `confirmation`, `input`, `execute` via `__event_call__` | Error if disconnected, 300s timeout |
 
-> **Important :** Utiliser les noms courts (`message`, `replace`, `files`, `status`, `source`) pour la persistance en BDD. Les noms longs (`chat:message:delta`, `chat:message:files`) fonctionnent côté frontend mais ne persistent pas.
+> **Important:** Use short names (`message`, `replace`, `files`, `status`, `source`) for DB persistence. Long names (`chat:message:delta`, `chat:message:files`) work on the frontend side but do not persist.
 
-## Matrice de compatibilité par type de fonction
+## Compatibility Matrix by Function Type
 
-| Capacité | Tools | Actions | Pipes | Filters |
-|----------|-------|---------|-------|---------|
+| Capability | Tools | Actions | Pipes | Filters |
+|------------|-------|---------|-------|---------|
 | `__event_emitter__` | ✅ | ✅ | ✅ | ✅ |
 | `__event_call__` | ✅ | ✅ | ✅ | ✅ |
-| Return value → réponse utilisateur | ✅ | ✅ | ✅ | ❌ |
+| Return value → user response | ✅ | ✅ | ✅ | ❌ |
 | `HTMLResponse` → Rich UI embed | ✅ | ✅ | ❌ | ❌ |
 
-## Exemples de code
+## Code Examples
 
 ### Status Event
 
@@ -75,7 +75,7 @@ await __event_emitter__({
         "hidden": False,
     },
 })
-# IMPORTANT : Toujours émettre un status final avec done: True pour arrêter l'animation shimmer
+# IMPORTANT: Always emit a final status with done: True to stop the shimmer animation
 await __event_emitter__({
     "type": "status",
     "data": {
@@ -85,7 +85,7 @@ await __event_emitter__({
 })
 ```
 
-### Confirmation (bidirectionnelle)
+### Confirmation (bidirectional)
 
 ```python
 result = await __event_call__({
@@ -96,12 +96,12 @@ result = await __event_call__({
     }
 })
 if result:
-    pass  # Utilisateur a confirmé
+    pass  # User confirmed
 else:
-    pass  # Utilisateur a annulé
+    pass  # User cancelled
 ```
 
-### Input (bidirectionnel)
+### Input (bidirectional)
 
 ```python
 result = await __event_call__({
@@ -129,7 +129,7 @@ result = await __event_call__({
 })
 ```
 
-### Execute JavaScript (bidirectionnel avec retour)
+### Execute JavaScript (bidirectional with return)
 
 ```python
 result = await __event_call__({
@@ -163,7 +163,7 @@ await __event_emitter__({
 })
 ```
 
-### Formulaire custom via execute
+### Custom Form via execute
 
 ```python
 result = await __event_call__({
@@ -200,7 +200,7 @@ result = await __event_call__({
 ```python
 class Tools:
     def __init__(self):
-        self.citation = False  # REQUIS pour utiliser des citations custom
+        self.citation = False  # REQUIRED to use custom citations
 
     async def research_tool(self, topic: str, __event_emitter__=None) -> str:
         if not __event_emitter__:
@@ -238,14 +238,14 @@ class Tools:
         return f"Research on '{topic}' completed. Found {len(sources)} sources."
 ```
 
-> Les citations fonctionnent identiquement en mode Default et Native. Pour des citations distinctes, s'assurer que les identifiants de chaque citation sont différents (le mécanisme de groupement fusionne les citations de même ID — Issue #17366).
+> Citations work identically in Default and Native modes. For distinct citations, ensure that each citation's identifiers are different (the grouping mechanism merges citations with the same ID — Issue #17366).
 
-### Métadonnées de citation personnalisables
+### Customizable Citation Metadata
 
-Le champ `metadata` des citations supporte des champs étendus selon le type de source :
+The `metadata` field of citations supports extended fields based on source type:
 
 ```python
-# Citation académique
+# Academic citation
 await __event_emitter__({
     "type": "citation",
     "data": {
@@ -265,7 +265,7 @@ await __event_emitter__({
     }
 })
 
-# Enregistrement de base de données
+# Database record
 await __event_emitter__({
     "type": "citation",
     "data": {
@@ -282,21 +282,21 @@ await __event_emitter__({
 })
 ```
 
-**Valeurs connues pour `type` :** `"academic_journal"`, `"database_record"`, `"web_page"`, etc.
+**Known `type` values:** `"academic_journal"`, `"database_record"`, `"web_page"`, etc.
 
-## Événements pour outils externes
+## Events for External Tools
 
-Les outils externes (OpenAPI/MCP) peuvent émettre des événements via un endpoint REST.
+External tools (OpenAPI/MCP) can emit events via a REST endpoint.
 
-**Prérequis :** Variable d'environnement `ENABLE_FORWARD_USER_INFO_HEADERS=True`
+**Prerequisite:** Environment variable `ENABLE_FORWARD_USER_INFO_HEADERS=True`
 
-**Headers fournis automatiquement :**
+**Headers automatically provided:**
 - `X-Open-WebUI-Chat-Id`
-- `X-Open-WebUI-Message-Id` (noms configurables)
+- `X-Open-WebUI-Message-Id` (configurable names)
 
-**Endpoint :** `POST /api/v1/chats/{chat_id}/messages/{message_id}/event` avec auth API key/session token
+**Endpoint:** `POST /api/v1/chats/{chat_id}/messages/{message_id}/event` with API key/session token auth
 
-**Payload :**
+**Payload:**
 
 ```json
 {
@@ -308,8 +308,8 @@ Les outils externes (OpenAPI/MCP) peuvent émettre des événements via un endpo
 }
 ```
 
-> Le payload suit la même structure que `__event_emitter__` : un objet avec `type` et `data`.
+> The payload follows the same structure as `__event_emitter__`: an object with `type` and `data`.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/events — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/events — consulted 04/13/2026
 
-**Limitation :** Seuls les événements one-way (status, notification) sont disponibles pour les outils externes. Les événements interactifs (confirmation, input) nécessitent des outils Python natifs.
+**Limitation:** Only one-way events (status, notification) are available for external tools. Interactive events (confirmation, input) require native Python tools.

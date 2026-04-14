@@ -1,32 +1,32 @@
-# Paramètres injectés (API implicite)
+# Injected Parameters (Implicit API)
 
-Open WebUI injecte automatiquement certains paramètres dans les fonctions d'extension. Le mécanisme utilise `inspect.signature()` pour matcher les paramètres déclarés par la fonction avec les `extra_params` disponibles. Il suffit de **déclarer le paramètre dans la signature** pour le recevoir.
+Open WebUI automatically injects certain parameters into extension functions. The mechanism uses `inspect.signature()` to match parameters declared by the function with available `extra_params`. Simply **declare the parameter in the signature** to receive it.
 
-## Référence complète des paramètres réservés
+## Complete Reserved Parameters Reference
 
-| Paramètre | Type | Toujours disponible | Description |
+| Parameter | Type | Always Available | Description |
 |-----------|------|---------------------|-------------|
-| `body` | dict | Oui | Dictionnaire de la requête de chat completion : stream, model, messages, features, stream_options, metadata, files |
-| `__user__` | dict | Oui | `{id, email, name, role ("user"\|"admin"), valves (si UserValves défini)}` |
-| `__metadata__` | dict | Oui | Métadonnées de contexte enrichies (voir structure ci-dessous) |
-| `__model__` | dict | Oui | Objet modèle complet (voir structure ci-dessous) |
-| `__messages__` | list | Oui | Liste des messages, identique à `body["messages"]` |
-| `__chat_id__` | str | Contexte chat | UUID unique de la conversation |
-| `__session_id__` | str | Généralement | Identifiant de session |
-| `__message_id__` | str | Contexte chat | Identifiant du message courant |
-| `__event_emitter__` | Callable | Contexte fonction | Communication one-way vers le frontend |
-| `__event_call__` | Callable | Contexte fonction | Communication bidirectionnelle, timeout 300s (configurable via `WEBSOCKET_EVENT_CALLER_TIMEOUT`). Disponible dans Tools, Actions, Pipes et Filters. |
-| `__files__` | list | Oui ([] si vide) | Liste d'objets fichiers (voir structure ci-dessous) |
-| `__request__` | fastapi.Request | Oui | Instance Request FastAPI |
-| `__task__` | str | Contexte tâche | Type de tâche interne |
-| `__task_body__` | dict | Contexte tâche | Body spécifique à la tâche interne |
-| `__tools__` | list | Oui | Liste d'instances ToolUserModel (voir structure ci-dessous) |
-| `__id__` | str | Actions | Identifiant de l'action (utile pour multi-actions) |
-| `__oauth_token__` | dict | Si configuré | Token OAuth de l'utilisateur (auto-refreshed). Méthode recommandée pour les appels API authentifiés (voir structure ci-dessous) |
+| `body` | dict | Yes | Chat completion request dictionary: stream, model, messages, features, stream_options, metadata, files |
+| `__user__` | dict | Yes | `{id, email, name, role ("user"|"admin"), valves (if UserValves defined)}` |
+| `__metadata__` | dict | Yes | Enriched context metadata (see structure below) |
+| `__model__` | dict | Yes | Complete model object (see structure below) |
+| `__messages__` | list | Yes | List of messages, identical to `body["messages"]` |
+| `__chat_id__` | str | Chat context | Unique UUID of the conversation |
+| `__session_id__` | str | Usually | Session identifier |
+| `__message_id__` | str | Chat context | Current message identifier |
+| `__event_emitter__` | Callable | Function context | One-way communication to frontend |
+| `__event_call__` | Callable | Function context | Bidirectional communication, 300s timeout (configurable via `WEBSOCKET_EVENT_CALLER_TIMEOUT`). Available in Tools, Actions, Pipes, and Filters. |
+| `__files__` | list | Yes ([] if empty) | List of file objects (see structure below) |
+| `__request__` | fastapi.Request | Yes | FastAPI Request instance |
+| `__task__` | str | Task context | Internal task type |
+| `__task_body__` | dict | Task context | Body specific to internal task |
+| `__tools__` | list | Yes | List of ToolUserModel instances (see structure below) |
+| `__id__` | str | Actions | Action identifier (useful for multi-actions) |
+| `__oauth_token__` | dict | If configured | User OAuth token (auto-refreshed). Recommended method for authenticated API calls (see structure below) |
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/development/reserved-args — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/development/reserved-args — consulted 04/13/2026
 
-## Structure de `__metadata__`
+## `__metadata__` Structure
 
 ```python
 {
@@ -60,20 +60,20 @@ Open WebUI injecte automatiquement certains paramètres dans les fonctions d'ext
 }
 ```
 
-### Types de tâches internes (`__task__`)
+### Internal Task Types (`__task__`)
 
 `title_generation`, `tags_generation`, `emoji_generation`, `query_generation`, `image_prompt_generation`, `autocomplete_generation`, `function_calling`, `moa_response_generation`
 
-### Détection de la source de la requête
+### Detecting Request Source
 
 ```python
 if __metadata__ and __metadata__.get("interface") == "open-webui":
-    # Requête depuis l'interface web
+    # Request from web interface
 else:
-    # Requête API directe
+    # Direct API request
 ```
 
-## Structure de `__model__`
+## `__model__` Structure
 
 ```python
 {
@@ -113,9 +113,9 @@ else:
 }
 ```
 
-## Structure de `__files__`
+## `__files__` Structure
 
-Les images sont exclues de `__files__` — elles sont envoyées en base64 directement dans les messages.
+Images are excluded from `__files__` — they are sent as base64 directly in messages.
 
 ```python
 [{
@@ -147,7 +147,7 @@ Les images sont exclues de `__files__` — elles sont envoyées en base64 direct
 }]
 ```
 
-### Accès au fichier physique
+### Accessing Physical File
 
 ```python
 from pathlib import Path
@@ -155,48 +155,48 @@ the_file = Path(f"/app/backend/data/uploads/{__files__[0]['file']['id']}_{__file
 assert the_file.exists()
 ```
 
-## Structure de `__tools__`
+## `__tools__` Structure
 
-Chaque élément de `__tools__` est un `ToolUserModel` contenant :
+Each element in `__tools__` is a `ToolUserModel` containing:
 
 ```python
 {
     "id": "uuid",
     "user_id": "uuid",
     "name": "Tool Display Name",
-    "content": "# Code source Python...",
-    "specs": [{...}],  # JSON schema des fonctions du tool
+    "content": "# Python source code...",
+    "specs": [{...}],  # JSON schema of tool functions
     "meta": {"description": "...", "manifest": {...}},
     "valves": {...},
     "access_control": {...},
     "user": {"id": "uuid", "name": "...", "email": "...", "role": "..."},
-    "callable": <function ou functools.partial>,
-    "# ... autres champs du modèle Tool"
+    "callable": <function or functools.partial>,
+    "# ... other tool model fields"
 }
 ```
 
-> **Attention sécurité :** Pour les outils async, le champ `callable` est un `functools.partial` qui peut exposer des données sensibles (`__user__`, `__event_emitter__`). Voir [13-security.md](13-security.md) § fuite functools.partial.
+> **Security warning:** For async tools, the `callable` field is a `functools.partial` that may expose sensitive data (`__user__`, `__event_emitter__`). See [13-security.md](13-security.md) § functools.partial leak.
 
-## Structure de `__oauth_token__`
+## `__oauth_token__` Structure
 
 ```python
 {
     "access_token": "eyJ...",
     "token_type": "Bearer",
-    "refresh_token": "...",  # Si supporté par le provider
-    "expires_at": 1740000000  # Timestamp Unix, auto-refreshed
+    "refresh_token": "...",  # If supported by provider
+    "expires_at": 1740000000  # Unix timestamp, auto-refreshed
 }
 ```
 
-> Méthode recommandée pour les appels API authentifiés : utiliser `__oauth_token__["access_token"]` dans les headers Authorization plutôt que de stocker des clés API dans les Valves.
+> Recommended method for authenticated API calls: use `__oauth_token__["access_token"]` in Authorization headers rather than storing API keys in Valves.
 
-## Comportement quand un paramètre réservé est indisponible
+## Behavior When a Reserved Parameter is Unavailable
 
-Quand un paramètre réservé est demandé dans la signature mais n'est pas disponible dans le contexte actuel (ex: `__event_call__` sans connexion WebSocket live, `__oauth_token__` sans OAuth configuré), la valeur injectée est **`None`**. Aucune erreur n'est levée — il incombe au développeur de vérifier la disponibilité :
+When a reserved parameter is requested in the signature but is not available in the current context (e.g., `__event_call__` without live WebSocket connection, `__oauth_token__` without OAuth configured), the injected value is **`None`. No error is raised** — it is the developer's responsibility to check availability:
 
 ```python
 async def my_tool(self, query: str, __event_call__=None) -> str:
     if __event_call__ is None:
-        return "Mode dégradé : interaction bidirectionnelle non disponible"
+        return "Degraded mode: bidirectional interaction unavailable"
     result = await __event_call__({...})
 ```

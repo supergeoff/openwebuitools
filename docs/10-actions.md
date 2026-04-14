@@ -1,8 +1,8 @@
-# Créer une Action (boutons interactifs)
+# Creating an Action (interactive buttons)
 
-Une Action Function ajoute des boutons interactifs sous les messages assistant dans l'interface. Au clic, du Python s'exécute côté serveur avec communication bidirectionnelle via `__event_call__`.
+An Action Function adds interactive buttons under assistant messages in the interface. On click, Python executes server-side with bidirectional communication via `__event_call__`.
 
-## Structure de base
+## Basic Structure
 
 ```python
 from pydantic import BaseModel, Field
@@ -21,13 +21,13 @@ class Action:
         return {"content": "Modified message content"}
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/action/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/action/ — consulted 04/13/2026
 
-**Exigence critique :** "Action functions should always be defined as `async`."
+**Critical requirement:** "Action functions should always be defined as `async`."
 
 ## Multi-Actions
 
-Une seule classe Action peut exposer plusieurs boutons via la liste `actions`, définie comme **attribut de classe** (au même niveau que `Valves`) :
+A single Action class can expose multiple buttons via the `actions` list, defined as a **class attribute** (at the same level as `Valves`):
 
 ```python
 class Action:
@@ -43,13 +43,13 @@ async def action(self, body: dict, __id__=None, **kwargs):
         return {"content": "Translation: ..."}
 ```
 
-Le paramètre `__id__` contient l'ID de l'action cliquée.
+The `__id__` parameter contains the ID of the clicked action.
 
-## Ordre des boutons
+## Button Order
 
 "Action buttons beneath assistant messages are sorted by their `priority` valve value in **ascending order** — lower values appear first (leftmost)."
 
-Sans valve `priority`, l'ordre parmi les priorités égales est déterminé **alphabétiquement par function ID**.
+Without a `priority` valve, the order among equal priorities is determined **alphabetically by function ID**.
 
 ## Frontmatter
 
@@ -64,31 +64,31 @@ requirements: requests,beautifulsoup4
 """
 ```
 
-**Champs supportés :** title, author, version, required_open_webui_version, icon_url
+**Supported fields:** title, author, version, required_open_webui_version, icon_url
 
-**ATTENTION :** `icon_url` DOIT utiliser des URLs hébergées, **jamais base64**.
+**WARNING:** `icon_url` MUST use hosted URLs, **never base64**.
 
-## Valeur de retour — 3 comportements distincts
+## Return Value — 3 Distinct Behaviors
 
 ```python
-# Cas 1 : Retourner None — ne PAS modifier le message (recommandé par défaut)
+# Case 1: Return None — do NOT modify the message (recommended default)
 async def action(self, body: dict, **kwargs):
-    # ... logique (notification, sauvegarde fichier, etc.)
+    # ... logic (notification, file save, etc.)
     return None
 
-# Cas 2 : Retourner {"content": "..."} — REMPLACER le contenu du message
+# Case 2: Return {"content": "..."} — REPLACE message content
 async def action(self, body: dict, **kwargs):
     return {"content": "Modified message content",
             "files": [{"type": "image", "url": "chart.png", "name": "Chart"}]}
 
-# Cas 3 : Retourner body — SUPPRIME le message (BUG, ne jamais faire)
+# Case 3: Return body — DELETE the message (BUG, never do this)
 async def action(self, body: dict, **kwargs):
-    return body  # ← INCORRECT — cause la suppression non intentionnelle du message
+    return body  # ← INCORRECT — causes unintentional message deletion
 ```
 
-> Source : Issue #8292 — consultée le 13/04/2026
+> Source: Issue #8292 — consulted 04/13/2026
 
-## Exemple complet : sauvegarde de fichier
+## Complete Example: File Save
 
 ```python
 async def action(self, body: dict, __user__=None, 
@@ -109,11 +109,11 @@ async def action(self, body: dict, __user__=None,
     })
 ```
 
-> Source : Article Medium "Optimize Open WebUI" — consultée le 13/04/2026
+> Source: Medium article "Optimize Open WebUI" — consulted 04/13/2026
 
-## Configuration Docker pour la persistance fichiers
+## Docker Configuration for File Persistence
 
-Les Actions qui écrivent des fichiers nécessitent un bind mount :
+Actions that write files require a bind mount:
 
 ```bash
 docker run -d -p 3000:8080 --gpus all \
@@ -123,4 +123,4 @@ docker run -d -p 3000:8080 --gpus all \
   --name open-webui ghcr.io/open-webui/open-webui:cuda
 ```
 
-Le bind mount "enables data exchange between isolated container and host system."
+The bind mount "enables data exchange between isolated container and host system."

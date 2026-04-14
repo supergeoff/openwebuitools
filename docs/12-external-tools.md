@@ -1,29 +1,29 @@
-# Outils externes (OpenAPI + MCP)
+# External Tools (OpenAPI + MCP)
 
-Open WebUI supporte deux types d'outils externes : les serveurs **OpenAPI** et les serveurs **MCP (Model Context Protocol)**. Ces outils s'exécutent en dehors du processus Open WebUI et sont accessibles au LLM via function calling.
+Open WebUI supports two types of external tools: **OpenAPI** servers and **MCP (Model Context Protocol)** servers. These tools run outside the Open WebUI process and are accessible to the LLM via function calling.
 
-> Pour la plupart des déploiements, **OpenAPI** reste le chemin d'intégration préféré.
+> For most deployments, **OpenAPI** remains the preferred integration path.
 >
-> Source : https://docs.openwebui.com/features/extensibility/mcp.mdx + https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/index.mdx — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/mcp.mdx + https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/index.mdx — consulted 04/13/2026
 
 ## OpenAPI Tool Servers
 
-### Pourquoi OpenAPI
+### Why OpenAPI
 
-- Standard établi, production-proven
-- Pas de protocole propriétaire — si vous construisez des REST APIs, vous êtes déjà prêt
-- Intégration facile et hébergement flexible
-- Sécurité solide : HTTPS, OAuth, JWT, API Keys
-- Écosystème d'outils riche (génération code, documentation, validation, mocking)
-- Futur-proof et stable
+- Established standard, production-proven
+- No proprietary protocol — if you're building REST APIs, you're already ready
+- Easy integration and flexible hosting
+- Solid security: HTTPS, OAuth, JWT, API Keys
+- Rich tool ecosystem (code generation, documentation, validation, mocking)
+- Future-proof and stable
 
 ### Limitations
 
-- **Événements one-way uniquement** : les outils OpenAPI peuvent émettre des status updates et notifications via le REST endpoint, mais les événements interactifs (confirmation, input utilisateur) sont réservés aux outils Python natifs
-- **Pas de streaming** : les réponses sont retournées en bloc, pas token par token
-- CORS requis pour les serveurs locaux
+- **One-way events only:** OpenAPI tools can emit status updates and notifications via the REST endpoint, but interactive events (confirmation, user input) are reserved for native Python tools
+- **No streaming:** Responses are returned in bulk, not token by token
+- CORS required for local servers
 
-> Source : https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/index.mdx — consultée le 13/04/2026
+> Source: https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/index.mdx — consulted 04/13/2026
 
 ### Quickstart
 
@@ -34,15 +34,15 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --reload
 ```
 
-Le serveur est accessible à `http://localhost:8000`. La documentation interactive à `http://localhost:8000/docs`.
+The server is accessible at `http://localhost:8000`. Interactive documentation at `http://localhost:8000/docs`.
 
-### Connexion dans Open WebUI
+### Connection in Open WebUI
 
-1. Ouvrir **⚙️ Settings → ➕ Tools**
-2. Entrer l'URL du serveur (ex: `http://localhost:8000`)
-3. Cliquer "Save"
+1. Open **⚙️ Settings → ➕ Tools**
+2. Enter the server URL (e.g., `http://localhost:8000`)
+3. Click "Save"
 
-### CORS — Indispensable pour les serveurs locaux
+### CORS — Essential for Local Servers
 
 ```python
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,15 +56,15 @@ app.add_middleware(
 )
 ```
 
-**HTTPS en production :** Si Open WebUI est servi en HTTPS, les serveurs locaux doivent aussi être en HTTPS, ou tourner sur localhost (127.0.0.1).
+**HTTPS in production:** If Open WebUI is served over HTTPS, local servers must also be HTTPS, or run on localhost (127.0.0.1).
 
 ### operationId
 
-Il est important de définir un `operationId` custom pour tous les endpoints.
+It is important to define a custom `operationId` for all endpoints.
 
-### Configuration via variable d'environnement
+### Configuration via Environment Variable
 
-`TOOL_SERVER_CONNECTIONS` : JSON array de configurations de connexion. Supporte les types `"openapi"` et `"mcp"`.
+`TOOL_SERVER_CONNECTIONS`: JSON array of connection configurations. Supports types `"openapi"` and `"mcp"`.
 
 ```json
 [
@@ -98,95 +98,95 @@ Il est important de définir un `operationId` custom pour tous les endpoints.
 ]
 ```
 
-> **Stabilité MCP :** Le support MCP est en amélioration continue. L'écosystème plus large est encore en évolution — attendez-vous à des breaking changes occasionnels.
+> **MCP Stability:** MCP support is under continuous improvement. The wider ecosystem is still evolving — expect occasional breaking changes.
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/tools/openapi-servers/open-webui.mdx — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/tools/openapi-servers/open-webui.mdx — consulted 04/13/2026
 
-### N'importe quel framework/langage
+### Any Framework/Language
 
-FastAPI, Flask+Flask-RESTX, Express+Swagger, Spring Boot, Go avec Swag... La seule exigence est une spec OpenAPI valide avec des operationId.
+FastAPI, Flask+Flask-RESTX, Express+Swagger, Spring Boot, Go with Swag... The only requirement is a valid OpenAPI spec with operationIds.
 
-### Types d'outils possibles
+### Possible Tool Types
 
-- Opérations filesystem (read/write, list directories)
-- Accès Git et repositories
-- Requêtes base de données
+- Filesystem operations (read/write, list directories)
+- Git and repository access
+- Database queries
 - Web scrapers / summarizers
-- Intégrations SaaS (Salesforce, Jira, Slack)
-- Composants mémoire / RAG
-- Microservices internes sécurisés
+- SaaS integrations (Salesforce, Jira, Slack)
+- Memory / RAG components
+- Secured internal microservices
 
 ---
 
 ## MCP (Model Context Protocol)
 
-Disponible nativement depuis **v0.6.31**. Supporte le transport **Streamable HTTP uniquement** (pas stdio, pas SSE natif).
+Natively available since **v0.6.31**. Supports **Streamable HTTP transport only** (not stdio, not native SSE).
 
-> Open WebUI est un environnement web multi-tenant, pas un processus desktop local. Les connexions stdio/SSE longue durée sont incompatibles avec cette architecture.
+> Open WebUI is a multi-tenant web environment, not a local desktop process. Long-running stdio/SSE connections are incompatible with this architecture.
 
-### Prérequis : WEBUI_SECRET_KEY
+### Prerequisite: WEBUI_SECRET_KEY
 
-Vous **DEVEZ** définir `WEBUI_SECRET_KEY` dans votre Docker config. Sans elle, les outils OAuth MCP casseront à chaque redémarrage (Error: `Error decrypting tokens`).
+You **MUST** set `WEBUI_SECRET_KEY` in your Docker config. Without it, MCP OAuth tools will break on every restart (Error: `Error decrypting tokens`).
 
 ### Configuration
 
-1. Ouvrir **⚙️ Admin Settings → External Tools**
-2. Cliquer **+ (Add Server)**
-3. Définir **Type** sur **MCP (Streamable HTTP)**
-4. Entrer l'**URL du serveur** et les détails **Auth**
+1. Open **⚙️ Admin Settings → External Tools**
+2. Click **+ (Add Server)**
+3. Set **Type** to **MCP (Streamable HTTP)**
+4. Enter **Server URL** and **Auth** details
 5. **Save**
 
-### Erreur courante : mauvais type de connexion
+### Common Error: Wrong Connection Type
 
-Si vous ajoutez un serveur MCP en sélectionnant le type **OpenAPI**, l'UI va crasher ou afficher un écran de chargement infini.
+If you add an MCP server by selecting the **OpenAPI** type, the UI will crash or display an infinite loading screen.
 
-**Solution :**
-1. Désactiver la connexion problématique via Admin Settings
-2. Rafraîchir (Ctrl+F5)
-3. Ré-ajouter avec le bon Type **MCP (Streamable HTTP)**
+**Solution:**
+1. Disable the problematic connection via Admin Settings
+2. Refresh (Ctrl+F5)
+3. Re-add with the correct Type **MCP (Streamable HTTP)**
 
-### Modes d'authentification
+### Authentication Modes
 
-| Mode | Quand l'utiliser |
-|------|-----------------|
-| **None** | Serveurs locaux ou réseau interne sans token. **À utiliser par défaut** sauf si le serveur requiert explicitement un token. |
-| **Bearer** | Uniquement si le serveur requiert un token API spécifique. **Le champ Key est obligatoire.** |
-| **OAuth 2.1** | Dynamic Client Registration (DCR). Quand le serveur supporte l'enregistrement automatique de clients OAuth. |
-| **OAuth 2.1 (Static)** | Quand vous avez déjà un client ID/secret pré-créé par votre IdP. |
+| Mode | When to Use |
+|------|-------------|
+| **None** | Local servers or internal network without token. **Use by default** unless the server explicitly requires a token. |
+| **Bearer** | Only if the server requires a specific API token. **Key field is mandatory.** |
+| **OAuth 2.1** | Dynamic Client Registration (DCR). When the server supports automatic OAuth client registration. |
+| **OAuth 2.1 (Static)** | When you already have a pre-created client ID/secret from your IdP. |
 
-**Attention Bearer :** Sélectionner "Bearer" sans fournir de key envoie un header `Authorization: Bearer` vide, ce qui provoque un rejet immédiat par beaucoup de serveurs.
+**Bearer warning:** Selecting "Bearer" without providing a key sends an empty `Authorization: Bearer` header, which causes immediate rejection by many servers.
 
 ### OAuth 2.1 (Static) Setup
 
-1. Sélectionner **OAuth 2.1 (Static)** dans Auth
-2. Entrer **Client ID** et **Client Secret**
-3. Cliquer **Register Client**
+1. Select **OAuth 2.1 (Static)** in Auth
+2. Enter **Client ID** and **Client Secret**
+3. Click **Register Client**
 4. **Save**
-5. Ouvrir un chat → **+ → Integrations → Tools** → activer l'outil MCP
-6. Compléter le flow OAuth dans le navigateur
+5. Open a chat → **+ → Integrations → Tools** → enable the MCP tool
+6. Complete the OAuth flow in the browser
 
-### Limitation OAuth 2.1 : pas de default tools
+### OAuth 2.1 Limitation: No Default Tools
 
-**Ne pas définir d'outils OAuth 2.1 MCP comme default/pre-enabled sur un modèle.** Le flow OAuth nécessite une redirection navigateur interactive qui ne peut pas se produire pendant une requête chat completion.
+**Do not set OAuth 2.1 MCP tools as default/pre-enabled on a model.** The OAuth flow requires interactive browser redirection that cannot occur during a chat completion request.
 
-**Workaround :** Les utilisateurs activent manuellement les outils OAuth 2.1 par chat via le bouton **➕** dans la zone d'input.
+**Workaround:** Users manually enable OAuth 2.1 tools per chat via the **➕** button in the input area.
 
-### URLs de connexion en Docker
+### Connection URLs in Docker
 
-Si Open WebUI tourne en Docker et le serveur MCP est sur la machine hôte :
-- Utiliser `http://host.docker.internal:<port>` (ex: `http://host.docker.internal:3000/sse`) au lieu de `localhost`
+If Open WebUI runs in Docker and the MCP server is on the host machine:
+- Use `http://host.docker.internal:<port>` (e.g., `http://host.docker.internal:3000/sse`) instead of `localhost`
 
 ### Function Name Filter List
 
-Restreint quels outils sont exposés au LLM. Laisser vide pour exposer tous les outils.
+Restricts which tools are exposed to the LLM. Leave empty to expose all tools.
 
-**Workaround bug :** Si erreur de connexion avec une liste vide, ajouter une simple virgule (`,`) pour forcer le système à traiter le champ comme un filtre valide.
+**Bug workaround:** If connection error with an empty list, add a simple comma (`,`) to force the system to treat the field as a valid filter.
 
 ---
 
-## MCPO — Proxy MCP vers OpenAPI
+## MCPO — MCP Proxy to OpenAPI
 
-Pour les serveurs MCP qui utilisent **stdio** ou **SSE** (non Streamable HTTP), le proxy [mcpo](https://github.com/open-webui/mcpo) traduit les transports en endpoints OpenAPI compatibles.
+For MCP servers using **stdio** or **SSE** (non-Streamable HTTP), the [mcpo](https://github.com/open-webui/mcpo) proxy translates transports into compatible OpenAPI endpoints.
 
 ### Quickstart
 
@@ -194,9 +194,9 @@ Pour les serveurs MCP qui utilisent **stdio** ou **SSE** (non Streamable HTTP), 
 uvx mcpo --port 8000 -- uvx mcp-server-time --local-timezone=America/New_York
 ```
 
-Le serveur est accessible à `http://localhost:8000` avec documentation interactive à `http://localhost:8000/docs`.
+The server is accessible at `http://localhost:8000` with interactive documentation at `http://localhost:8000/docs`.
 
-### Dockerfile pour production
+### Dockerfile for Production
 
 ```dockerfile
 FROM python:3.11-slim
@@ -205,33 +205,33 @@ RUN pip install mcpo uv
 CMD ["uvx", "mcpo", "--host", "0.0.0.0", "--port", "8000", "--", "uvx", "mcp-server-time", "--local-timezone=America/New_York"]
 ```
 
-> Le flag `--host 0.0.0.0` est requis dans les conteneurs Docker pour exposer le service sur toutes les interfaces réseau.
+> The `--host 0.0.0.0` flag is required in Docker containers to expose the service on all network interfaces.
 
-### Fonctionnement
+### How It Works
 
-- Au démarrage, le proxy se connecte au serveur MCP pour découvrir les outils
-- Il construit automatiquement des endpoints FastAPI basés sur les schémas MCP
-- Documentation Swagger UI auto-générée
-- Asynchrone et performant
+- At startup, the proxy connects to the MCP server to discover tools
+- It automatically constructs FastAPI endpoints based on MCP schemas
+- Auto-generated Swagger UI documentation
+- Asynchronous and performant
 
-### Événements supportés
+### Supported Events
 
-Les outils exposés via mcpo peuvent émettre des événements (status, notifications) via l'endpoint REST d'Open WebUI. Les headers `X-Open-WebUI-Chat-Id` et `X-Open-WebUI-Message-Id` sont passés automatiquement.
+Tools exposed via mcpo can emit events (status, notifications) via Open WebUI's REST endpoint. Headers `X-Open-WebUI-Chat-Id` and `X-Open-WebUI-Message-Id` are automatically passed.
 
-> Source : https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/mcp.mdx — consultée le 13/04/2026
+> Source: https://github.com/open-webui/docs/blob/main/docs/features/extensibility/plugin/tools/openapi-servers/mcp.mdx — consulted 04/13/2026
 
 ---
 
-## MCP vs OpenAPI : quand choisir quoi
+## MCP vs OpenAPI: When to Choose What
 
-| Critère | OpenAPI | MCP |
-|---------|---------|-----|
-| Prêt pour la production | ✅ Standard mature | ⚠️ En évolution |
-| SSO / API gateways | ✅ Natif | ❌ Limité |
-| Observabilité | ✅ Tracing, audit | ⚠️ Basique |
-| Protocole streaming | ❌ Réponse complète | ✅ Streamable HTTP |
-| Écosystème outils | ✅ Massive | 🔄 En croissance |
-| Setup complexité | Faible (REST standard) | Moyenne (nouveau protocole) |
-| Multi-tenant web | ✅ Conçu pour | ⚠️ Limites CORS/CSRF |
+| Criterion | OpenAPI | MCP |
+|-----------|---------|-----|
+| Production-ready | ✅ Mature standard | ⚠️ Evolving |
+| SSO / API gateways | ✅ Native | ❌ Limited |
+| Observability | ✅ Tracing, audit | ⚠️ Basic |
+| Streaming protocol | ❌ Full response | ✅ Streamable HTTP |
+| Tool ecosystem | ✅ Massive | 🔄 Growing |
+| Setup complexity | Low (standard REST) | Medium (new protocol) |
+| Multi-tenant web | ✅ Designed for | ⚠️ CORS/CSRF limits |
 
-> Vous n'avez pas à choisir : beaucoup d'équipes exposent OpenAPI en interne et wrappe MCP au bord pour des clients spécifiques.
+> You don't have to choose: many teams expose OpenAPI internally and wrap MCP at the edge for specific clients.

@@ -1,8 +1,8 @@
-# Créer un Filter (pré/post-traitement)
+# Creating a Filter (pre/post-processing)
 
-Un Filter Function agit comme middleware dans le flux de traitement. Il peut modifier les données en entrée (`inlet`), intercepter le streaming (`stream`), et modifier les données en sortie (`outlet`).
+A Filter Function acts as middleware in the processing flow. It can modify input data (`inlet`), intercept streaming (`stream`), and modify output data (`outlet`).
 
-## Structure de base
+## Basic Structure
 
 ```python
 from pydantic import BaseModel, Field
@@ -14,7 +14,7 @@ class Filter:
     
     def __init__(self):
         self.valves = self.Valves()
-        self.toggle = True  # Crée un switch dans l'UI
+        self.toggle = True  # Creates a switch in the UI
         self.icon = "https://example.com/icon.svg"
     
     async def inlet(self, body: dict, __event_emitter__=None, __user__=None, __metadata__=None, __model__=None) -> dict:
@@ -27,32 +27,32 @@ class Filter:
         pass
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ — consulted 04/13/2026
 
-## Méthodes
+## Methods
 
-### `inlet()` — Pré-traitement
+### `inlet()` — Pre-processing
 
-- **Toujours appelé** (WebUI ET API)
-- Reçoit les données modifiées par les filtres précédents (les Filters s'exécutent en cascade selon leur `priority`)
-- Peut injecter des paramètres body supplémentaires
-- **Clés réservées non modifiables :** `metadata`, `features`, `tool_ids`, `files`, `skill_ids`
-- **DOIT retourner body**
+- **Always called** (WebUI AND API)
+- Receives data modified by previous filters (Filters execute in cascade according to their `priority`)
+- Can inject additional body parameters
+- **Non-modifiable reserved keys:** `metadata`, `features`, `tool_ids`, `files`, `skill_ids`
+- **MUST return body**
 
 ```python
 async def inlet(self, body: dict, __event_emitter__=None, __user__=None, __metadata__=None, __model__=None) -> dict:
-    # Exemple : filtrer des mots indésirables
+    # Example: filter unwanted words
     user_message = body["messages"][-1]["content"]
     body["messages"][-1]["content"] = user_message.replace("bad_word", "[filtered]")
     return body
 ```
 
-### `stream()` — Interception temps réel
+### `stream()` — Real-time Interception
 
-- **Toujours appelé** (WebUI ET API)
-- Opère sur les chunks individuels pendant le streaming
-- Peut être async (`async def stream(self, event: dict) -> dict`)
-- Structure de l'event :
+- **Always called** (WebUI AND API)
+- Operates on individual chunks during streaming
+- Can be async (`async def stream(self, event: dict) -> dict`)
+- Event structure:
 
 ```python
 {
@@ -63,20 +63,20 @@ async def inlet(self, body: dict, __event_emitter__=None, __user__=None, __metad
 
 ```python
 def stream(self, event: dict) -> dict:
-    # Exemple : transformer le texte en streaming
+    # Example: transform streaming text
     if "choices" in event and event["choices"]:
         content = event["choices"][0].get("delta", {}).get("content", "")
         event["choices"][0]["delta"]["content"] = content.upper()
     return event
 ```
 
-### `outlet()` — Post-traitement
+### `outlet()` — Post-processing
 
-- **NON appelé** pour les requêtes API directes à `/api/chat/completions`
-- Appelé après complétion chat WebUI uniquement
-- Peut être sync ou async
-- Retourne `None` (basé sur effets de bord) ou `body` modifié (retourner `body` modifié peut fonctionner mais le comportement a été affecté par le bug #8168 — désormais résolu)
-- Pour déclencher via API : `POST /api/chat/completed`
+- **NOT called** for direct API requests to `/api/chat/completions`
+- Called after WebUI chat completion only
+- Can be sync or async
+- Returns `None` (based on side effects) or modified `body` (returning modified `body` may work but behavior was affected by bug #8168 — now fixed)
+- To trigger via API: `POST /api/chat/completed`
 
 ```python
 async def outlet(self, body: dict, __user__: Optional[dict] = None) -> None:
@@ -84,42 +84,42 @@ async def outlet(self, body: dict, __user__: Optional[dict] = None) -> None:
     pass
 ```
 
-## Comportement API
+## API Behavior
 
-| Méthode | WebUI | API directe `/api/chat/completions` |
-|---------|-------|-------------------------------------|
-| `inlet()` | ✅ Toujours appelé | ✅ Toujours appelé |
-| `stream()` | ✅ Toujours appelé | ✅ Toujours appelé |
-| `outlet()` | ✅ Appelé | ❌ NON appelé |
+| Method | WebUI | Direct API `/api/chat/completions` |
+|--------|-------|-------------------------------------|
+| `inlet()` | ✅ Always called | ✅ Always called |
+| `stream()` | ✅ Always called | ✅ Always called |
+| `outlet()` | ✅ Called | ❌ NOT called |
 
-## Système global / spécifique modèle
+## Global / Model-specific System
 
-| État | is_active | is_global | Effet |
-|------|-----------|-----------|-------|
-| Globalement activé | ✅ True | ✅ True | S'applique à TOUS les modèles (grisé dans l'UI) |
-| Globalement désactivé | ❌ False | Any | Pas appliqué |
-| Spécifique modèle | ✅ True | ❌ False | Seulement sur les modèles sélectionnés |
-| Inactif | ❌ False | ❌ False | Pas appliqué |
+| State | is_active | is_global | Effect |
+|------|-----------|-----------|---------|
+| Globally enabled | ✅ True | ✅ True | Applies to ALL models (grayed in UI) |
+| Globally disabled | ❌ False | Any | Not applied |
+| Model-specific | ✅ True | ❌ False | Only on selected models |
+| Inactive | ❌ False | ❌ False | Not applied |
 
 ## Toggleable vs Always-On
 
 ### Toggleable (`self.toggle = True`)
 
-- Switches visibles dans l'UI
-- Activation/désactivation par l'utilisateur par session
-- Idéal pour les filtres optionnels (ex: traduction, prompt enhancement)
+- Visible switches in UI
+- User enable/disable per session
+- Ideal for optional filters (e.g., translation, prompt enhancement)
 
-### Always-On (pas de `self.toggle`)
+### Always-On (no `self.toggle`)
 
-- S'exécute automatiquement
-- Pas de contrôle utilisateur
-- Idéal pour sécurité, compliance, logging
+- Executes automatically
+- No user control
+- Ideal for security, compliance, logging
 
 ## `self.icon`
 
-URL de l'icône affichée dans l'interface pour le Filter.
+URL of the icon displayed in the interface for the Filter.
 
-## Exemple complet : filtre de mots
+## Complete Example: Word Filter
 
 ```python
 from pydantic import BaseModel, Field
@@ -147,13 +147,13 @@ class Filter:
         pass
 ```
 
-> Source : https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ + article Medium — consultée le 13/04/2026
+> Source: https://docs.openwebui.com/features/extensibility/plugin/functions/filter/ + Medium article — consulted 04/13/2026
 
-## Leçons de bugs connus
+## Lessons from Known Bugs
 
-### `__event_emitter__` dans outlet (Issue #8168 — RÉSOLU)
+### `__event_emitter__` in outlet (Issue #8168 — FIXED)
 
-Le typage du paramètre `__event_emitter__` doit être `Callable` ou omis (pour l'injection automatique), **pas `None`**. Le comportement de revert dans outlet était un bug résolu.
+The typing of the `__event_emitter__` parameter must be `Callable` or omitted (for automatic injection), **not `None`**. The revert behavior in outlet was a bug that was fixed.
 
 ```python
 # INCORRECT
@@ -163,22 +163,22 @@ async def outlet(self, body: dict, __event_emitter__: None) -> dict:
 async def outlet(self, body: dict, __event_emitter__=None) -> dict:
 ```
 
-> Source : Issue #8168 — consultée le 13/04/2026
+> Source: Issue #8168 — consulted 04/13/2026
 
-## Filtres dans le contexte Pipelines
+## Filters in Pipelines Context
 
-Dans le contexte des Pipelines externes, les filtres ont des propriétés spécifiques :
+In the context of external Pipelines, filters have specific properties:
 
 ```python
 class Pipeline:
     def __init__(self):
-        self.type = "filter"  # Requis pour que le Pipeline soit traité comme filtre
+        self.type = "filter"  # Required for Pipeline to be treated as a filter
         self.name = "Filter"
         self.valves = self.Valves(**{"pipelines": ["llama3:latest"]})
     
     class Valves(BaseModel):
-        pipelines: List[str] = []  # Cibler des pipelines spécifiques
+        pipelines: List[str] = []  # Target specific pipelines
         priority: int = 0
 ```
 
-La valve `pipelines` permet de cibler uniquement certains pipelines. Si vide, le filtre s'applique à tous les pipelines.
+The `pipelines` valve allows targeting only specific pipelines. If empty, the filter applies to all pipelines.
