@@ -1,0 +1,28 @@
+name: Deploy Pipes
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'pipe/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-pipes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Deploy pipes to OpenWebUI
+        env:
+          OPENWEBUI_URL: ${{ secrets.OPENWEBUI_URL }}
+          OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
+        run: python scripts/deploy-pipes.py
