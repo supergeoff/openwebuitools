@@ -6,25 +6,46 @@ import sys
 from pathlib import Path
 
 
+def model_exists(base_url: str, headers: dict, model_id: str) -> bool:
+    resp = requests.get(
+        f"{base_url}/api/v1/models/model",
+        headers=headers,
+        params={"id": model_id},
+        timeout=30,
+    )
+    return resp.status_code == 200
+
+
 def deploy_model(base_url: str, api_key: str, model_data: dict or list):
-    """Deploy model preset (matches /api/v1/models/create from Swagger)."""
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    # From Swagger: POST /api/v1/models/create is best (ModelForm with id/name/params/meta). 401=bad key, 422=bad payload.
-    endpoints = [
-        f"{base_url}/api/v1/models/create"
-    ]  # Prioritized per openapi.json analysis
-    for endpoint in endpoints:
-        try:
-            payload = model_data[0] if isinstance(model_data, list) else model_data
-            resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-            if resp.status_code in (200, 201, 204):
-                print(f"✅ Deployed to {endpoint}")
-                return True
-            print(f"❌ {endpoint} returned {resp.status_code}: {resp.text[:200]}...")
-        except Exception as e:
-            print(f"Error with {endpoint}: {e}")
+    payload = model_data[0] if isinstance(model_data, list) else model_data
+    model_id = payload.get("id")
+
+    if model_id and model_exists(base_url, headers, model_id):
+        print(f"Model '{model_id}' already exists. Updating...")
+        resp = requests.post(
+            f"{base_url}/api/v1/models/model/update",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        action = "Updated"
+    else:
+        print(f"Creating model '{model_id}'...")
+        resp = requests.post(
+            f"{base_url}/api/v1/models/create",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        action = "Created"
+
+    if resp.status_code in (200, 201, 204):
+        print(f"✅ {action} model '{model_id}'")
+        return True
+
     print(
-        "Failed. Set OPENWEBUI_URL and valid API key."
+        f"❌ Failed to {action.lower()} model '{model_id}': {resp.status_code} {resp.text[:200]}..."
     )
     return False
 
