@@ -1,4 +1,4 @@
-name: Deploy OpenWebUI Models
+name: Deploy Models
 
 on:
   push:

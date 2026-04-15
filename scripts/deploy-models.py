@@ -27,15 +27,15 @@ def deploy_model(base_url: str, api_key: str, model_data: dict or list):
                 payload = model_data
             resp = requests.post(endpoint, headers=headers, json=payload, timeout=30)
             if resp.status_code in (200, 201, 204):
-                print(f"✅ Deployed to {endpoint}")
+                print(f"Deployed to {endpoint}")
                 return True
             elif resp.status_code < 500:
-                print(f"⚠️  {endpoint} returned {resp.status_code}")
+                print(f"{endpoint} returned {resp.status_code}")
                 continue
         except Exception as e:
             print(f"Error with {endpoint}: {e}")
             continue
-    print("❌ Failed to deploy on all endpoints. Check OPENWEBUI_URL and API key.")
+    print("Failed to deploy on all endpoints. Check OPENWEBUI_URL and API key.")
     return False
 
 
@@ -58,7 +58,7 @@ def main():
                 data = json.load(f)
             print(f"Deploying {json_file.name}...")
             if deploy_model(base_url, api_key, data):
-                print(f"✅ Successfully processed {json_file.name}")
+                print(f"Successfully processed {json_file.name}")
             else:
                 success = False
         except Exception as e:
