@@ -235,3 +235,26 @@ Tools exposed via mcpo can emit events (status, notifications) via Open WebUI's 
 | Multi-tenant web | ✅ Designed for | ⚠️ CORS/CSRF limits |
 
 > You don't have to choose: many teams expose OpenAPI internally and wrap MCP at the edge for specific clients.
+
+## Model Presets & External API (for prompts, tools, models)
+
+From research (docs.openwebui.com, Context7 /websites/openwebui, tavily):
+
+- **API Endpoints**: Use `/api/v1/models` (list/create), `/api/v1/functions` for Pipes, admin routes for presets. Requires API key (admin).
+- **Prompt Manipulation**: Set in `params.system` (full system prompt). Pipes use `inlet()` filter to inject system messages dynamically. See `08-pipes.md` and `09-filters.md`.
+- **Tools Integration**: Configure via `meta.toolIds`, `meta.skillIds`, `meta.builtinTools`, `meta.capabilities`. External tools via OpenAPI/MCP (see above). `defaultFeatureIds` for auto-enable.
+- **Custom Model Deployment**: Place minimal JSON in `models/` (see `models/apex.json`). Remove instance-specific fields (user_id, access_grants, timestamps, user, write_access, massive base64 profile_image_url). Use CI/CD to POST to OpenWebUI API for auto-import.
+- **Pipes for Advanced Models**: Python classes with `Pipe.pipe()` act as custom models (see `08-pipes.md`). Valves for config (`05-valves.md`).
+
+Example minimal preset (apex.json after cleanup):
+```json
+{
+  "id": "custom.apex",
+  "name": "Custom: Apex",
+  "base_model_id": "...",
+  "params": { "system": "...", "function_calling": "native" },
+  "meta": { "description": "...", "capabilities": {...}, "toolIds": [...], ... }
+}
+```
+
+See `14-development-debugging.md` for upload/JSON conversion and `15-migrations.md` for API changes.
