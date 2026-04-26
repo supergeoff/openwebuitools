@@ -21,10 +21,7 @@ skills:
   - https://github.com/supergeoff/skills
 
   # upstream Anthropic skills (root layout is `skills/<name>/SKILL.md`)
-  - https://github.com/anthropics/skills/tree/main/skills/docx
-  - https://github.com/anthropics/skills/tree/main/skills/pdf
-  - https://github.com/anthropics/skills/tree/main/skills/pptx
-  - https://github.com/anthropics/skills/tree/main/skills/xlsx
+  # - https://github.com/anthropics/skills/tree/main/skills/docx
 
   # single-file SKILL.md somewhere
   # - https://github.com/foo/bar/blob/main/path/to/SKILL.md
