@@ -567,7 +567,9 @@ def load_manifest(path: str) -> list[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    ap = argparse.ArgumentParser(
+        description="Deploy SKILL.md-style skills from a manifest into OpenWebUI.",
+    )   
     ap.add_argument(
         "-m", "--manifest",
         default="skills/manifest.yaml",
