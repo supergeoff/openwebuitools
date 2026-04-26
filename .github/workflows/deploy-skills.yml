@@ -1,0 +1,35 @@
+name: Deploy Skills
+ 
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - '.github/scripts/deploy-skills.py'
+      - '.github/workflows/deploy-skills.yml'
+  workflow_dispatch:
+ 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Avoid double-runs when several commits arrive close together
+    concurrency:
+      group: deploy-skills-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+ 
+      - name: Install dependencies
+        run: pip install requests pyyaml
+ 
+      - name: Deploy skills to OpenWebUI
+        env:
+          OPENWEBUI_URL: ${{ secrets.OPENWEBUI_URL }}
+          OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python .github/scripts/deploy-skills.py

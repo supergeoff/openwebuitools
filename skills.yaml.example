@@ -1,0 +1,27 @@
+# Manifest for owui-skills-sync.
+# Each entry is a GitHub URL. Supported shapes:
+#
+#   - https://github.com/owner/repo
+#       repo root; we walk top-level dirs and install every dir that has SKILL.md
+#
+#   - https://github.com/owner/repo/tree/<ref>/<path>
+#       a tree URL; if <path> contains SKILL.md it's one skill,
+#       otherwise we walk its children
+#
+#   - https://github.com/owner/repo/blob/<ref>/<path>/SKILL.md
+#   - https://raw.githubusercontent.com/owner/repo/<ref>/<path>/SKILL.md
+#       point at a specific SKILL.md
+#
+# When <ref> is absent (repo root form) we default to `main`.
+# Drift is accepted: re-run the sync to pick up upstream changes.
+
+skills:
+  # your own repo (replace with whatever you actually publish)
+  - https://github.com/supergeoff/skills
+
+  # upstream Anthropic skills
+  - https://github.com/anthropics/skills/tree/main/document-skills/xlsx
+  - https://github.com/anthropics/skills/tree/main/document-skills/docx
+
+  # single-file SKILL.md somewhere
+  # - https://github.com/foo/bar/blob/main/path/to/SKILL.md
