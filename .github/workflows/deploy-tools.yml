@@ -1,0 +1,28 @@
+name: Deploy Tools
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'tools/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Deploy tools to OpenWebUI
+        env:
+          OPENWEBUI_URL: ${{ secrets.OPENWEBUI_URL }}
+          OPENWEBUI_API_KEY: ${{ secrets.OPENWEBUI_API_KEY }}
+        run: python .github/scripts/deploy-tools.py
