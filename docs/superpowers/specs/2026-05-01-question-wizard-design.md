@@ -8,7 +8,7 @@
 
 ## 1. Objective
 
-Refactor the existing `questionnaire_wizard.py` tool into `question-wizard.py` with the following goals:
+Refactor the existing `questionnaire_wizard.py` tool into `question_wizard.py` with the following goals:
 
 1. **Rename** all user-facing references from "Questionnaire Wizard" to "Question Wizard".
 2. **Monochrome UI** — replace all blue/green/colored CSS with a strict black/white/grey palette.
@@ -21,9 +21,9 @@ Refactor the existing `questionnaire_wizard.py` tool into `question-wizard.py` w
 
 | # | Change | File | Detail |
 |---|--------|------|--------|
-| 1 | Rename file | `tools/questionnaire_wizard.py` → `tools/question-wizard.py` | Disk-level rename |
-| 2 | Rename title | `tools/question-wizard.py` frontmatter | `title: Question Wizard` |
-| 3 | Rename method | `tools/question-wizard.py` | `run_questionnaire` → `run_question_wizard` |
+| 1 | Rename file | `tools/questionnaire_wizard.py` → `tools/question_wizard.py` | Disk-level rename |
+| 2 | Rename title | `tools/question_wizard.py` frontmatter | `title: Question Wizard` |
+| 3 | Rename method | `tools/question_wizard.py` | `run_questionnaire` → `run_question_wizard` |
 | 4 | Monochrome CSS | `_HTML_TEMPLATE` inline CSS | Replace `#2563eb`, `#059669`, `#bfdbfe`, `#eff6ff`, `#ecfdf5` with black/white/grey equivalents |
 | 5 | Strengthen docstring | `run_question_wizard` docstring | Add: *"⚠️ Call this function EXACTLY ONCE per turn. Do NOT call it multiple times."* |
 | 6 | Fix postMessage | JS `submit()` function | Change payload from `{ type: "input:prompt:submit", data: { text: md } }` to `{ type: "input:prompt:submit", text: md }` |
@@ -73,7 +73,7 @@ Rationale: OpenWebUI's Rich UI embeds expect the `text` key at the top level of 
 
 ```
 tools/
-  question-wizard.py      ← renamed from questionnaire_wizard.py
+  question_wizard.py      ← renamed from questionnaire_wizard.py
 ```
 
 The tool remains a **single self-contained file** with inline HTML/CSS/JS — preferred by OpenWebUI for easy copy-paste deployment.
