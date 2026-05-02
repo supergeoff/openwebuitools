@@ -72,7 +72,7 @@ def main():
         print("Error: OPENWEBUI_API_KEY environment variable is required.")
         sys.exit(1)
 
-    pipe_dir = Path("pipe")
+    pipe_dir = Path("pipes")
     if not pipe_dir.exists():
         print("No pipe/ directory found.")
         return

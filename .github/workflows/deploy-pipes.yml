@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'pipe/**'
+      - 'pipes/**'
   workflow_dispatch:
 
 jobs:

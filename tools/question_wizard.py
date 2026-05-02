@@ -13,7 +13,6 @@ description: |
     Depends: fastapi.responses.HTMLResponse
 """
 
-import asyncio
 import json
 
 from fastapi.responses import HTMLResponse
@@ -127,6 +126,12 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 (function () {
   "use strict";
   var CONFIG = JSON.parse(document.getElementById("wizard-config").textContent);
+  var SESSION_KEY = "qw_sub_" + btoa(JSON.stringify(CONFIG)).slice(0, 32);
+  if (sessionStorage.getItem(SESSION_KEY)) {
+    document.getElementById("app").innerHTML = '<div class="confirmation">\u2705 R\u00e9ponses d\u00e9j\u00e0 envoy\u00e9es !</div>';
+    reportHeight();
+    return;
+  }
   var TOTAL  = CONFIG.questions.length;
   var TITLE  = CONFIG.title || "Question Wizard";
   var DESC   = CONFIG.description || "";
@@ -208,6 +213,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   function next() { if (state.idx < TOTAL - 1) { state.idx++; render(); } else { submit(); } }
   function submit() {
     if (state.frozen) return; state.frozen = true;
+    sessionStorage.setItem(SESSION_KEY, "1");
     var lines = state.answers.map(function (a, i) {
       var ans; if (a.type === "text") { var v = a.text_value ? a.text_value.trim() : ""; ans = v || "(non répondu)"; }
       else { var parts = []; parts = parts.concat(a.selected); if (a.text_active && a.text_value !== "") parts.push(a.text_value);
@@ -232,7 +238,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 class Tools:
     """Open WebUI tool for interactive questionnaires."""
-    _lock = asyncio.Lock()
+    _running = False
 
     class Valves:
         pass
@@ -247,8 +253,13 @@ class Tools:
         Types: single | multiple | text    |    Proposals: 2-4 for single/multiple
         Constraints: 1-13 questions total.
         """
-        async with self._lock:
+        if self._running:
+            return "Error: Question Wizard is already running. Please wait."
+        self._running = True
+        try:
             return await self._run_wizard(questions_json)
+        finally:
+            self._running = False
 
     async def _run_wizard(self, questions_json: str):
         try:
@@ -256,8 +267,13 @@ class Tools:
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON -- {e}"
 
+        if isinstance(payload, list):
+            payload = {"questions": payload}
+        elif isinstance(payload, dict) and "question" in payload and "questions" not in payload:
+            payload = {"questions": [payload]}
+
         if not isinstance(payload, dict):
-            return "Error: The root element must be a JSON object."
+            return "Error: The root element must be a JSON object with a 'questions' array."
 
         questions = payload.get("questions")
         if not isinstance(questions, list) or not (1 <= len(questions) <= _MAX_QUESTIONS):
