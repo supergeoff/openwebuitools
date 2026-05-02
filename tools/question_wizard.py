@@ -1,18 +1,38 @@
 """
 title: Question Wizard
 author: supergeoff
-version: 0.4.0
+version: 0.5.0
 description: |
     Interactive visual questionnaire for Open WebUI.
 
     ⚠️ Call `run_question_wizard` EXACTLY ONCE per user request.
-    Usage: json.dumps({"title": "...", "questions": [{"question": "...", "type": "single", "proposals": ["Oui", "Non"]}]})
-    Types: single | multiple | text    |    Proposals: 2-4 for single/multiple, optional for text
-    Constraints: 1–13 questions total.
+    Parameter: a single JSON **string** produced by `json.dumps(...)`.
+
+    ROOT OBJECT `{}` — required keys:
+      • "questions": array of 1–13 question objects (REQUIRED)
+      • "title": string (optional)
+      • "description": string (optional)
+      • "submit_label": string, default "Envoyer" (optional)
+
+    QUESTION OBJECT — required keys:
+      • "question": string (REQUIRED)
+      • "type": "single" | "multiple" | "text"  (REQUIRED for clarity,
+        will be guessed from "proposals" if omitted)
+      • "proposals": ["A","B",...] (REQUIRED for single/multiple — 2 to 4 items)
+      • "allow_text": true | false (optional, default true for single/multiple)
+      • "placeholder": string (optional, for text type)
+
+    TOLERANCE: "options", "choices", "answers" are accepted as aliases
+    for "proposals". Missing "type" with "proposals" present defaults to "single".
+
+    EXAMPLE (copy-paste format):
+    json.dumps({"title":"Feedback","questions":[{"question":"Satisfait ?","type":"single","proposals":["Oui","Non"]},{"question":"Commentaires","type":"text"}]})
 
     Depends: fastapi.responses.HTMLResponse
 """
 
+import asyncio
+import hashlib
 import json
 
 from fastapi.responses import HTMLResponse
@@ -27,36 +47,91 @@ _MIN_PROPOSALS = 2
 _TYPE_ALIASES = {
     "single": "single",
     "single_choice": "single",
+    "radio": "single",
     "multiple": "multiple",
     "multi_choice": "multiple",
+    "checkbox": "multiple",
     "text": "text",
     "open": "text",
+    "textarea": "text",
 }
 
+_PROPOSAL_ALIASES = ("proposals", "options", "choices", "answers")
 
-def _validate_question(q: dict, idx: int) -> dict | str:
-    """Normalize and validate a single question. Returns the normalized dict or an error string."""
+
+def _extract_proposals(q: dict):
+    """Return proposals list from the first matching alias key."""
+    for key in _PROPOSAL_ALIASES:
+        if key in q:
+            val = q[key]
+            if isinstance(val, list):
+                return val
+    return []
+
+
+def _validate_question(q: dict, idx: int) -> dict | str | tuple:
+    """
+    Normalise and validate a single question.
+    Returns:
+      • dict  — normalised question
+      • str   — fatal error message
+      • tuple (dict, str) — (normalised, warning)
+    """
+    if not isinstance(q, dict):
+        return f"Error: Question {idx + 1} is not a valid object."
+
     if not isinstance(q.get("question"), str):
         return f"Error: Missing or invalid 'question' field in question {idx + 1}."
 
-    q_type = _TYPE_ALIASES.get(q.get("type", "single"), "single")
-    proposals = q.get("proposals", [])
+    raw_type = q.get("type", "")
+    proposals = _extract_proposals(q)
+    inferred_type = None
 
+    # Guess type from proposals if missing / ambiguous
+    if not raw_type:
+        if len(proposals) >= _MIN_PROPOSALS:
+            inferred_type = "single"
+    else:
+        inferred_type = _TYPE_ALIASES.get(str(raw_type).lower().strip())
+        if inferred_type is None and len(proposals) >= _MIN_PROPOSALS:
+            inferred_type = "single"
+
+    if inferred_type is None:
+        inferred_type = "single"  # ultimate fallback with warning
+        warning = f"Warning: question {idx + 1} had no valid type; defaulted to 'single'."
+    else:
+        warning = None
+
+    q_type = inferred_type
+
+    # Validate proposal counts
     if q_type in ("single", "multiple"):
         if not isinstance(proposals, list) or not (
             _MIN_PROPOSALS <= len(proposals) <= _MAX_PROPOSALS
         ):
-            return f"Error: single/multiple questions need {_MIN_PROPOSALS}–{_MAX_PROPOSALS} proposals (question {idx + 1})."
-    elif isinstance(proposals, list) and len(proposals) > _MAX_PROPOSALS:
+            return (
+                f"Error: single/multiple questions need {_MIN_PROPOSALS}–{_MAX_PROPOSALS} "
+                f"proposals (question {idx + 1}, got {len(proposals) if isinstance(proposals, list) else 'non-list'})."
+            )
+    elif q_type == "text" and isinstance(proposals, list) and len(proposals) > _MAX_PROPOSALS:
         return f"Error: At most {_MAX_PROPOSALS} proposals allowed (question {idx + 1})."
 
-    return {
+    norm = {
         "question": q["question"],
         "type": q_type,
         "proposals": list(proposals) if isinstance(proposals, list) else [],
-        "allow_text": False if q_type == "text" else q.get("allow_text", True) is not False,
-        "placeholder": q.get("placeholder", "Tapez votre réponse…") if q_type == "text" else "",
+        "allow_text": False
+        if q_type == "text"
+        else (q.get("allow_text", True) is not False),
+        "placeholder": (
+            q.get("placeholder", "Tapez votre réponse…") if q_type == "text" else ""
+        ),
     }
+
+    if warning:
+        return (norm, warning)
+    return norm
+
 
 # Inline HTML template — self-contained, no external file.
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -99,6 +174,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   #btn-skip:hover:not(:disabled) { color: #333333; border-color: #9ca3af; }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
   .confirmation { padding: 16px 24px; text-align: center; color: #000000; font-weight: 600; border-top: 1px solid #e0e0e0; background: #f5f5f5; }
+  .warning-banner { padding: 8px 12px; background: #fff8e1; color: #8a6d3b; font-size: 0.85rem; border-bottom: 1px solid #f0e5c0; }
 </style>
 </head>
 <body>
@@ -126,7 +202,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 (function () {
   "use strict";
   var CONFIG = JSON.parse(document.getElementById("wizard-config").textContent);
-  var SESSION_KEY = "qw_sub_" + btoa(JSON.stringify(CONFIG)).slice(0, 32);
+  var SESSION_KEY = "__SESSION_KEY__";
   if (sessionStorage.getItem(SESSION_KEY)) {
     document.getElementById("app").innerHTML = '<div class="confirmation">\u2705 R\u00e9ponses d\u00e9j\u00e0 envoy\u00e9es !</div>';
     reportHeight();
@@ -136,6 +212,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   var TITLE  = CONFIG.title || "Question Wizard";
   var DESC   = CONFIG.description || "";
   var SUBMIT = CONFIG.submit_label || "Envoyer";
+  var WARNINGS = CONFIG.warnings || [];
   var state = { idx: 0, frozen: false,
     answers: CONFIG.questions.map(function (q) {
       var isText = q.type === "text";
@@ -159,6 +236,14 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   function reportHeight() {
     var h = document.documentElement.scrollHeight;
     parent.postMessage({ type: "iframe:height", height: h }, "*"); }
+  function showWarnings() {
+    if (!WARNINGS.length) return;
+    var banner = document.createElement("div");
+    banner.className = "warning-banner";
+    banner.textContent = "\u26a0\ufe0f " + WARNINGS.join(" | ");
+    var app = document.getElementById("app");
+    app.insertBefore(banner, app.children[1]);
+  }
   function buildOptions(q) {
     els.list.innerHTML = "";
     if (q.type === "text") {
@@ -207,7 +292,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     els.counter.textContent = (state.idx + 1) + " / " + TOTAL;
     els.qtitle.textContent = q.question; els.bar.style.width = ((state.idx + 1) / TOTAL * 100) + "%";
     els.btnPrev.style.visibility = state.idx === 0 ? "hidden" : "visible";
-    els.btnNext.textContent = state.idx === TOTAL - 1 ? SUBMIT : "Suivant →";
+    els.btnNext.textContent = state.idx === TOTAL - 1 ? SUBMIT : "Suivant \u2192";
     buildOptions(q); reportHeight(); }
   function prev() { if (state.idx > 0) { state.idx--; render(); } }
   function next() { if (state.idx < TOTAL - 1) { state.idx++; render(); } else { submit(); } }
@@ -218,7 +303,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
       var ans; if (a.type === "text") { var v = a.text_value ? a.text_value.trim() : ""; ans = v || "(non répondu)"; }
       else { var parts = []; parts = parts.concat(a.selected); if (a.text_active && a.text_value !== "") parts.push(a.text_value);
         ans = parts.length ? parts.join(", ") : "(non répondu)"; }
-      return (i + 1) + ". " + a.question + "\n   → " + ans; });
+      return (i + 1) + ". " + a.question + "\n   \u2192 " + ans; });
     var md = "## 📝 Question Wizard: " + TITLE + "\n\n";
     if (DESC) { md += "**" + DESC + "**\n\n"; }
     md += lines.join("\n\n"); md += "\n\n---\n*Answers submitted via Question Wizard*";
@@ -229,7 +314,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     confirmDiv.textContent = "\u2705 R\u00e9ponses envoy\u00e9es !";
     document.getElementById("app").appendChild(confirmDiv); reportHeight(); }
   els.btnPrev.addEventListener("click", prev); els.btnNext.addEventListener("click", next); els.btnSkip.addEventListener("click", submit);
-  window.addEventListener("load", reportHeight); new ResizeObserver(reportHeight).observe(document.body); render();
+  window.addEventListener("load", reportHeight); new ResizeObserver(reportHeight).observe(document.body);
+  showWarnings(); render();
 })();
 </script>
 </body>
@@ -238,7 +324,8 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 class Tools:
     """Open WebUI tool for interactive questionnaires."""
-    _running = False
+
+    _lock = asyncio.Lock()
 
     class Valves:
         pass
@@ -253,13 +340,8 @@ class Tools:
         Types: single | multiple | text    |    Proposals: 2-4 for single/multiple
         Constraints: 1-13 questions total.
         """
-        if self._running:
-            return "Error: Question Wizard is already running. Please wait."
-        self._running = True
-        try:
+        async with self._lock:
             return await self._run_wizard(questions_json)
-        finally:
-            self._running = False
 
     async def _run_wizard(self, questions_json: str):
         try:
@@ -267,8 +349,10 @@ class Tools:
         except json.JSONDecodeError as e:
             return f"Error: Invalid JSON -- {e}"
 
+        # Graceful recovery: list root -> wrap in dict
         if isinstance(payload, list):
             payload = {"questions": payload}
+        # Graceful recovery: single question object -> wrap
         elif isinstance(payload, dict) and "question" in payload and "questions" not in payload:
             payload = {"questions": [payload]}
 
@@ -280,24 +364,47 @@ class Tools:
             return f"Error: 'questions' must be an array with 1-{_MAX_QUESTIONS} items."
 
         normalized = []
+        warnings = []
         for idx, q in enumerate(questions):
             result = _validate_question(q, idx)
             if isinstance(result, str):
                 return result
-            normalized.append(result)
+            if isinstance(result, tuple):
+                normalized.append(result[0])
+                warnings.append(result[1])
+            else:
+                normalized.append(result)
 
         config = {
             "title": payload.get("title", ""),
             "description": payload.get("description", ""),
             "submit_label": payload.get("submit_label", "Envoyer"),
             "questions": normalized,
+            "warnings": warnings,
         }
 
-        # Escape '<' so the JSON never breaks out of the </script> tag.
-        config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+        # Serialize with raw unicode, then escape '<' so the JSON never
+        # breaks out of the </script> tag in the HTML template.
+        config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
+        config_json = config_json.replace("<", "\\u003c")
+
+        # Stable session key generated server-side (avoids btoa unicode bug).
+        session_key = "qw_sub_" + hashlib.sha256(config_json.encode("utf-8")).hexdigest()[:24]
+
+        html_content = (
+            _HTML_TEMPLATE
+            .replace("__CONFIG_JSON__", config_json)
+            .replace("__SESSION_KEY__", session_key)
+        )
 
         return (
-            HTMLResponse(content=_HTML_TEMPLATE.replace("__CONFIG_JSON__", config_json),
-                        headers={"Content-Disposition": "inline"}),
-            {"status": "question_wizard_active", "questions_count": len(config["questions"])},
+            HTMLResponse(
+                content=html_content,
+                headers={"Content-Disposition": "inline"},
+            ),
+            {
+                "status": "question_wizard_active",
+                "questions_count": len(config["questions"]),
+                "warnings": warnings,
+            },
         )

@@ -29,7 +29,7 @@ Only skip if the user explicitly says "just guess" or similar opt-out language.
 <HARD-GATE>
 Do NOT write any questions as plain text in your response.
 Do NOT call `run_question_wizard` more than once.
-Build ALL questions into a SINGLE JSON object, then call `run_question_wizard` Exactly ONCE.
+Build ALL questions into a SINGLE JSON object wrapped by `json.dumps(...)`, then call `run_question_wizard` Exactly ONCE.
 </HARD-GATE>
 
 ## When to Invoke
@@ -42,15 +42,19 @@ Build ALL questions into a SINGLE JSON object, then call `run_question_wizard` E
 | You need to collect survey data | → Question Wizard |
 | You need to clarify ambiguous input | → Question Wizard (if 2+ clarifications needed) |
 
-## The Two Rules
+## The Rules
 
 ### Rule 1: ONE call only
 
-Build every question into **one** JSON object, then call `run_question_wizard` **Exactly once**. The tool has a class-level lock — calling it twice returns an error.
+Build every question into **one** JSON object, wrap it with `json.dumps(...)`, then call `run_question_wizard` **Exactly once**. The tool has a class-level lock — calling it twice returns an error.
 
-### Rule 2: JSON string, not object
+### Rule 2: JSON string via json.dumps
 
-The parameter is a **JSON string** (`json.dumps(...)`). Never pass a dict or array directly.
+The parameter is a **JSON string** produced by `json.dumps(...)`. Never pass a dict or array directly.
+
+### Rule 3: min 2 proposals for single / multiple
+
+Questions of type `single` or `multiple` **must** have between 2 and 4 proposals. One proposal is not valid.
 
 ## JSON Shape
 
@@ -101,6 +105,19 @@ json.dumps({
 }
 ```
 
+## Model-Friendly Aliases (Accepted by the Tool)
+
+The tool is **lenient** with field names to help models that don't follow the spec exactly:
+
+| Canonical key | Accepted aliases |
+|---|---|
+| `proposals` | `options`, `choices`, `answers` |
+| `type: "single"` | `single_choice`, `radio` |
+| `type: "multiple"` | `multi_choice`, `checkbox` |
+| `type: "text"` | `open`, `textarea` |
+
+If `type` is omitted but `proposals` (or aliases) are present, the tool guesses `single`.
+
 ## Quick Decision Tree
 
 ```dot
@@ -128,6 +145,18 @@ digraph question_flow {
     "json.dumps(object)" -> "run_question_wizard ONCE";
 }
 ```
+
+## Common Mistakes
+
+| Mistake | Fix |
+|---|---|
+| Root is `[` not `{}` | Wrap in `{"questions": [...]}` |
+| `< 2` or `> 4` proposals | Must be 2-4 |
+| Missing `question` key | Every item needs `"question": "..."` |
+| Using `options` instead of `proposals` | `options` is accepted as alias, but prefer `proposals` |
+| Calling twice in one turn | Build one JSON, one call |
+| Forgetting `json.dumps()` | Parameter is a **string**, not a dict |
+| One proposal only | Add at least one more, or use `type: "text"` |
 
 ## Complete Examples
 
@@ -237,22 +266,18 @@ One call. All questions inside it.
 ```python
 # WRONG — questions_json is typed as str
 await run_question_wizard({"questions": [q1]})              # no!
-await run_question_wizard(json.dumps([{"question": "OK?"}])) # no! root must be {}
+await run_question_wizard(json.dumps([{"question": "OK?"])) # no! root must be {}
 ```
 
-### ❌ Wrong keys
+### ❌ Only 1 proposal for single/multiple
 
-Never use `options`, `choices`, `answers`. The only valid keys are:
-- Root: `title`, `description`, `submit_label`, `questions`
-- Question: `question`, `type`, `proposals`, `allow_text`, `placeholder`
+```python
+# WRONG — needs 2-4 proposals
+{"question": "Done?", "type": "single", "proposals": ["Yes"]}  # error!
+```
 
-## Common Mistakes
+## One-Liner Cues for LLMs
 
-| Mistake | Fix |
-|---|---|
-| Root is `[` not `{}` | Wrap in `{"questions": [...]}` |
-| < 2 or > 4 proposals | Must be 2-4 |
-| Missing `question` key | Every item needs `"question": "..."` |
-| Using `options` instead of `proposals` | Key name is strict |
-| Calling twice in one turn | Build one JSON, one call |
-| Forgetting `json.dumps()` | Parameter is a string |
+**Before calling the tool, say this to yourself:**
+
+> "I need to ask the user something → json.dumps ONE object with ALL questions → call run_question_wizard ONCE → every single/multiple MUST have 2-4 proposals."
