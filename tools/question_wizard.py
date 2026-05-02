@@ -71,29 +71,29 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 <title>Question Wizard</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #fafafa; color: #000000; padding: 16px; line-height: 1.5; }
-  #app { max-width: 640px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e0e0e0; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
-  #header { padding: 20px 24px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: flex-start; }
-  #wizard-title { font-size: 1.15rem; font-weight: 600; color: #000000; }
-  #wizard-desc  { font-size: 0.9rem;  color: #666666; margin-top: 4px; }
-  #wizard-counter { font-size: 0.85rem; color: #666666; background: #fafafa; padding: 4px 10px; border-radius: 12px; white-space: nowrap; margin-left: 12px; }
-  #progress-track { height: 4px; background: #e0e0e0; width: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #fafafa; color: #000000; padding: 8px; line-height: 1.45; }
+  #app { max-width: 720px; margin: 0 auto; background: #ffffff; border-radius: 10px; border: 1px solid #e0e0e0; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  #header { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: flex-start; }
+  #wizard-title { font-size: 1rem; font-weight: 600; color: #000000; }
+  #wizard-desc  { font-size: 0.85rem;  color: #666666; margin-top: 3px; }
+  #wizard-counter { font-size: 0.8rem; color: #666666; background: #fafafa; padding: 3px 8px; border-radius: 10px; white-space: nowrap; margin-left: 10px; }
+  #progress-track { height: 3px; background: #e0e0e0; width: 100%; }
   #progress-bar  { height: 100%; width: 0%; background: #000000; transition: width 0.3s ease; }
-  #question-card { padding: 24px; }
-  #question-title { font-size: 1.05rem; font-weight: 500; margin-bottom: 16px; color: #000000; }
-  .option-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #e0e0e0; background: #fafafa; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+  #question-card { padding: 16px; }
+  #question-title { font-size: 0.95rem; font-weight: 500; margin-bottom: 12px; color: #000000; }
+  .option-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px; border-radius: 6px; border: 1px solid #e0e0e0; background: #fafafa; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
   .option-row:hover { border-color: #999999; background: #f0f0f0; }
   input[type="radio"], input[type="checkbox"] { cursor: pointer; accent-color: #000000; width: 18px; height: 18px; flex-shrink: 0; }
-  .option-row label { cursor: pointer; font-size: 0.95rem; color: #333333; flex: 1; }
-  .free-text-row { align-items: center; gap: 10px; }
-  .free-text-row label { flex: 0 0 auto; font-size: 0.95rem; color: #333333; }
-  .free-text-input { flex: 1; background: #ffffff; color: #000000; border: 1px solid #cccccc; border-radius: 6px; padding: 6px 10px; font-size: 0.95rem; outline: none; transition: border-color 0.15s; }
+  .option-row label { cursor: pointer; font-size: 0.9rem; color: #333333; flex: 1; }
+  .free-text-row { align-items: center; gap: 8px; }
+  .free-text-row label { flex: 0 0 auto; font-size: 0.9rem; color: #333333; }
+  .free-text-input { flex: 1; background: #ffffff; color: #000000; border: 1px solid #cccccc; border-radius: 6px; padding: 6px 8px; font-size: 0.9rem; outline: none; transition: border-color 0.15s; }
   .free-text-input:focus { border-color: #000000; }
   .free-text-input:disabled { opacity: 0.5; background: #f0f0f0; cursor: not-allowed; }
-  .free-textarea { width: 100%; min-height: 100px; background: #ffffff; color: #000000; border: 1px solid #cccccc; border-radius: 8px; padding: 12px; font-size: 0.95rem; outline: none; resize: vertical; transition: border-color 0.15s; }
+  .free-textarea { width: 100%; min-height: 80px; background: #ffffff; color: #000000; border: 1px solid #cccccc; border-radius: 6px; padding: 10px; font-size: 0.9rem; outline: none; resize: vertical; transition: border-color 0.15s; }
   .free-textarea:focus { border-color: #000000; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
-  #nav-controls { padding: 16px 24px; border-top: 1px solid #e0e0e0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  button { cursor: pointer; border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.95rem; font-weight: 500; transition: background 0.15s, transform 0.05s; }
+  #nav-controls { padding: 12px 16px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 14px; font-size: 0.9rem; font-weight: 500; transition: background 0.15s, transform 0.05s; }
   button:active { transform: translateY(1px); }
   #btn-prev { background: #f0f0f0; color: #333333; }
   #btn-prev:hover:not(:disabled) { background: #e0e0e0; }
@@ -162,7 +162,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
     if (q.type === "text") {
       var ta = document.createElement("textarea");
       ta.className = "free-textarea"; ta.placeholder = q.placeholder;
-      ta.value = q.text_value; ta.rows = 4;
+      ta.value = q.text_value; ta.rows = 3;
       ta.addEventListener("input", function (e) { q.text_value = e.target.value; reportHeight(); });
       els.list.appendChild(ta); setTimeout(reportHeight, 0); return; }
     q.proposals.forEach(function (prop, i) {
