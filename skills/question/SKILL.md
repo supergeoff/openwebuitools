@@ -8,6 +8,18 @@ tags: ["openwebui", "tools", "interaction", "questionnaire", "ux"]
 
 When you need information from the user (any form of questioning), you MUST use the Question Wizard tool — not free-text questions in the chat.
 
+## Universal Router
+
+This skill is THE way to ask questions to the user. It supersedes all other question-asking patterns. Any skill or context that needs user input must route through `run_question_wizard`.
+
+**Other skills that ask questions:**
+- **brainstorming** — when exploring requirements, use `run_question_wizard` to present options and gather preferences.
+- **challenger mode** (system prompt) — when surfacing assumptions, use `run_question_wizard` for confirmation.
+- **openspec skills** — when clarifying requirements or presenting design choices, use `run_question_wizard`.
+- **Any other skill** — if it would ask the user a question, route it here.
+
+Do not duplicate question-asking logic in other skills. Reference this skill instead.
+
 <REASONING>
 Ask yourself: "Am I trying to get answers from the user?"
 If YES → DO NOT proceed. Invoke this skill immediately.

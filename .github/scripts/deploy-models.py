@@ -1,32 +1,53 @@
 #!/usr/bin/env python3
 import os
+import re
 import json
+import yaml
 import requests
 import sys
 from pathlib import Path
 
 
-def model_exists(base_url: str, headers: dict, model_id: str) -> bool:
+def parse_md_file(path: Path) -> tuple[dict, str]:
+    """Parse a markdown file with YAML frontmatter.
+
+    Returns (frontmatter_dict, body_string).
+    """
+    content = path.read_text()
+    match = re.match(r"^---\n(.*?)\n---\n(.*)", content, re.DOTALL)
+    if not match:
+        raise ValueError(f"{path}: no valid YAML frontmatter found")
+
+    frontmatter = yaml.safe_load(match.group(1))
+    body = match.group(2).strip()
+    return frontmatter, body
+
+
+def get_existing_model(base_url: str, headers: dict, model_id: str) -> dict | None:
     resp = requests.get(
         f"{base_url}/api/v1/models/model",
         headers=headers,
         params={"id": model_id},
         timeout=30,
     )
-    return resp.status_code == 200
+    if resp.status_code == 200:
+        return resp.json()
+    return None
 
 
-def deploy_model(base_url: str, api_key: str, model_data: dict or list):
+def deploy_model(base_url: str, api_key: str, model_data: dict):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    payload = model_data[0] if isinstance(model_data, list) else model_data
-    model_id = payload.get("id")
+    model_id = model_data.get("id")
 
-    if model_id and model_exists(base_url, headers, model_id):
-        print(f"Model '{model_id}' already exists. Updating...")
+    existing = get_existing_model(base_url, headers, model_id)
+    if existing:
+        print(f"Model '{model_id}' already exists. Patching system prompt only...")
+        # Preserve existing model config, only update the system prompt
+        existing["params"]["system"] = model_data["params"]["system"]
         resp = requests.post(
             f"{base_url}/api/v1/models/model/update",
             headers=headers,
-            json=payload,
+            json=existing,
             timeout=30,
         )
         action = "Updated"
@@ -35,7 +56,7 @@ def deploy_model(base_url: str, api_key: str, model_data: dict or list):
         resp = requests.post(
             f"{base_url}/api/v1/models/create",
             headers=headers,
-            json=payload,
+            json=model_data,
             timeout=30,
         )
         action = "Created"
@@ -63,17 +84,30 @@ def main():
         return
 
     success = True
-    for json_file in models_dir.glob("*.json"):
+    for md_file in sorted(models_dir.glob("*.md")):
         try:
-            with open(json_file, "r") as f:
-                data = json.load(f)
-            print(f"Deploying {json_file.name}...")
-            if deploy_model(base_url, api_key, data):
-                print(f"Successfully processed {json_file.name}")
+            frontmatter, system_prompt = parse_md_file(md_file)
+            slug = frontmatter.get("slug", md_file.stem)
+            model_id = f"custom.{slug}"
+
+            payload = {
+                "id": model_id,
+                "base_model_id": frontmatter["base_model_id"],
+                "name": frontmatter["name"],
+                "params": {
+                    "system": system_prompt,
+                    **frontmatter.get("params", {}),
+                },
+                "meta": frontmatter.get("meta", {}),
+            }
+
+            print(f"Deploying {md_file.name} ({model_id})...")
+            if deploy_model(base_url, api_key, payload):
+                print(f"Successfully processed {md_file.name}")
             else:
                 success = False
         except Exception as e:
-            print(f"Error processing {json_file}: {e}")
+            print(f"Error processing {md_file}: {e}")
             success = False
 
     if success:
