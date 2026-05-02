@@ -1,40 +1,52 @@
 """
 title: Question Wizard
 author: supergeoff
-version: 0.2.3
+version: 0.3.0
 description: |
     Interactive visual questionnaire for Open WebUI.
 
-    The LLM must call `run_question_wizard(questions_json)` with a JSON string
-    describing the questionnaire. JSON keys are **strict** -- do NOT use
-    synonyms like "options", "choices", or "answers":
+    ⚠️ CALL RULE: Call `run_question_wizard` **EXACTLY ONCE** per user request.
+    Never call it a second time, never parallelize it. One call = one questionnaire.
 
-    - "title"         : string, optional
-    - "description"   : string, optional
-    - "submit_label"  : string, optional (default: "Envoyer")
-    - "questions"     : array of objects (REQUIRED)
+    USAGE: Pass a JSON **string** (not an object, not an array) as the sole argument.
 
-    Each question object:
-    - "question"    : string, the displayed question text (REQUIRED)
-    - "type"        : "single"  (or "single_choice")  -> one radio answer
-                      "multiple" (or "multi_choice") -> many checkboxes
-                      "text"    (or "open")         -> free textarea (no proposals)
-                      default: "single"
-    - "proposals"   : array of 2 to 4 strings. REQUIRED for single/multiple.
-                      IGNORED for text/open. Maximum 4 items.
-    - "allow_text"  : bool, default true. For single/multiple only.
-                      Adds a free-text "Autre" field below the proposals.
-    - "placeholder" : string, optional. Placeholder for text areas (text only).
+    JSON FORMAT — Root MUST be a JSON object `{...}`, NEVER an array `[...]`.
+    Build the JSON like this in Python:
+
+        json.dumps({
+            "title": "My Questionnaire",        # optional string
+            "description": "Context text",       # optional string
+            "submit_label": "Envoyer",           # optional, default "Envoyer"
+            "questions": [                        # REQUIRED array with 1-13 items
+                {
+                    "question": "Votre question ici ?",  # REQUIRED string
+                    "type": "single",                    # "single" | "multiple" | "text"
+                    "proposals": ["Oui", "Non"],         # REQUIRED for single/multiple: 2-4 strings
+                    "allow_text": true                   # optional bool (default true for single/multiple)
+                },
+                {
+                    "question": "Commentaire libre ?",
+                    "type": "text",
+                    "placeholder": "Écrivez ici..."      # optional for text type
+                }
+            ]
+        })
+
+    KEY RULES (strict, no synonyms):
+    - Root: MUST be `{}` object — never start with `[`
+    - `"questions"`: REQUIRED array at root level
+    - `"question"`: REQUIRED string inside each question object
+    - `"type"`: one of `"single"`, `"multiple"`, `"text"`
+    - `"proposals"`: REQUIRED 2-4 strings for "single"/"multiple"; optional for "text"
+    - NEVER use keys like "options", "choices", "answers"
+
+    FULL EXAMPLE (copy-paste this pattern):
+    {"title":"Sondage","description":"Feedback rapide","submit_label":"Envoyer","questions":[{"question":"Êtes-vous satisfait ?","type":"single","proposals":["Oui","Non","Mitigé"],"allow_text":true},{"question":"Commentaires ?","type":"text","placeholder":"Votre avis..."}]}
 
     Constraints:
-    - 1 to 13 questions total.
-    - single/multiple MUST have exactly 2 to 4 proposals.
-    - text/open needs no proposals.
-    - Use "multiple" when the user could reasonably pick more than one.
-    - Use "text" when a predefined list makes no sense.
-    - The "proposals" key is mandatory for single/multiple, even if empty
-      for text questions.
-    - Do NOT invent keys like "options", "choices", "answers".
+    - 1 to 13 questions total
+    - single/multiple MUST have 2 to 4 proposals
+    - text needs no proposals (placeholder optional)
 
     Depends : fastapi.responses.HTMLResponse
 """
@@ -222,6 +234,9 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 
 class Tools:
+    # Class-level lock prevents parallel/double calls within the same process.
+    _is_running: bool = False
+
     class Valves:
         """Open WebUI Valves (no configuration required)."""
         pass
@@ -253,7 +268,18 @@ class Tools:
         :param __user__: Open WebUI injected user context dict.
         :return: (HTMLResponse, context_dict) or plain error string on failure.
         """
+        # --- Guard: prevent double / parallel execution -------------------
+        if Tools._is_running:
+            return "Error: Question Wizard is already running. Please wait for the current wizard to finish before starting a new one."
+        Tools._is_running = True
 
+        try:
+            return await self._run_wizard(questions_json)
+        finally:
+            Tools._is_running = False
+
+    async def _run_wizard(self, questions_json: str):
+        """Core logic — called with the lock already held."""
         # --- Parse JSON ----------------------------------------------------
         try:
             payload = json.loads(questions_json)
