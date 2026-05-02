@@ -90,6 +90,21 @@ def _build_session_id(chat_id: str, workspace_id: str) -> str:
     return f"owui-{workspace_id}-{chat_id}"
 
 
+def _extract_valves(raw: Any) -> dict:
+    """Extract a dict from user valves, supporting both dict and Pydantic BaseModel."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if hasattr(raw, "model_dump"):
+        # Pydantic v2 BaseModel (e.g. UserValves)
+        return raw.model_dump()
+    if hasattr(raw, "dict"):
+        # Pydantic v1 fallback
+        return raw.dict()
+    return {}
+
+
 async def _emit(
     emitter: Optional[Callable[[dict], Any]],
     message: str,
@@ -181,7 +196,7 @@ class Tools:
                        -> "openwebui"
           base_url  -> self.valves.base_url -> HONCHO_BASE_URL env var -> None
         """
-        uv = user_valves or {}
+        uv = _extract_valves(user_valves)
         api_key = (
             uv.get("api_key", "")
             or self.user_valves.api_key
@@ -213,7 +228,7 @@ class Tools:
           user_valves["username"] -> self.user_valves.username
           -> __user__["name"] -> __user__["id"] -> "anonymous"
         """
-        uv = user_valves or {}
+        uv = _extract_valves(user_valves)
         if uv.get("username"):
             return _sanitize_id(uv["username"])
         if self.user_valves.username:
