@@ -1,56 +1,19 @@
 """
 title: Question Wizard
 author: supergeoff
-version: 0.3.0
+version: 0.4.0
 description: |
     Interactive visual questionnaire for Open WebUI.
 
-    ⚠️ CALL RULE: Call `run_question_wizard` **EXACTLY ONCE** per user request.
-    Never call it a second time, never parallelize it. One call = one questionnaire.
+    ⚠️ Call `run_question_wizard` EXACTLY ONCE per user request.
+    Usage: json.dumps({"title": "...", "questions": [{"question": "...", "type": "single", "proposals": ["Oui", "Non"]}]})
+    Types: single | multiple | text    |    Proposals: 2-4 for single/multiple, optional for text
+    Constraints: 1–13 questions total.
 
-    USAGE: Pass a JSON **string** (not an object, not an array) as the sole argument.
-
-    JSON FORMAT — Root MUST be a JSON object `{...}`, NEVER an array `[...]`.
-    Build the JSON like this in Python:
-
-        json.dumps({
-            "title": "My Questionnaire",        # optional string
-            "description": "Context text",       # optional string
-            "submit_label": "Envoyer",           # optional, default "Envoyer"
-            "questions": [                        # REQUIRED array with 1-13 items
-                {
-                    "question": "Votre question ici ?",  # REQUIRED string
-                    "type": "single",                    # "single" | "multiple" | "text"
-                    "proposals": ["Oui", "Non"],         # REQUIRED for single/multiple: 2-4 strings
-                    "allow_text": true                   # optional bool (default true for single/multiple)
-                },
-                {
-                    "question": "Commentaire libre ?",
-                    "type": "text",
-                    "placeholder": "Écrivez ici..."      # optional for text type
-                }
-            ]
-        })
-
-    KEY RULES (strict, no synonyms):
-    - Root: MUST be `{}` object — never start with `[`
-    - `"questions"`: REQUIRED array at root level
-    - `"question"`: REQUIRED string inside each question object
-    - `"type"`: one of `"single"`, `"multiple"`, `"text"`
-    - `"proposals"`: REQUIRED 2-4 strings for "single"/"multiple"; optional for "text"
-    - NEVER use keys like "options", "choices", "answers"
-
-    FULL EXAMPLE (copy-paste this pattern):
-    {"title":"Sondage","description":"Feedback rapide","submit_label":"Envoyer","questions":[{"question":"Êtes-vous satisfait ?","type":"single","proposals":["Oui","Non","Mitigé"],"allow_text":true},{"question":"Commentaires ?","type":"text","placeholder":"Votre avis..."}]}
-
-    Constraints:
-    - 1 to 13 questions total
-    - single/multiple MUST have 2 to 4 proposals
-    - text needs no proposals (placeholder optional)
-
-    Depends : fastapi.responses.HTMLResponse
+    Depends: fastapi.responses.HTMLResponse
 """
 
+import asyncio
 import json
 
 from fastapi.responses import HTMLResponse
@@ -58,9 +21,43 @@ from fastapi.responses import HTMLResponse
 # ---------------------------------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------------------------------
-MAX_QUESTIONS = 13
-MAX_PROPOSALS = 4
-MIN_PROPOSALS = 2
+_MAX_QUESTIONS = 13
+_MAX_PROPOSALS = 4
+_MIN_PROPOSALS = 2
+
+_TYPE_ALIASES = {
+    "single": "single",
+    "single_choice": "single",
+    "multiple": "multiple",
+    "multi_choice": "multiple",
+    "text": "text",
+    "open": "text",
+}
+
+
+def _validate_question(q: dict, idx: int) -> dict | str:
+    """Normalize and validate a single question. Returns the normalized dict or an error string."""
+    if not isinstance(q.get("question"), str):
+        return f"Error: Missing or invalid 'question' field in question {idx + 1}."
+
+    q_type = _TYPE_ALIASES.get(q.get("type", "single"), "single")
+    proposals = q.get("proposals", [])
+
+    if q_type in ("single", "multiple"):
+        if not isinstance(proposals, list) or not (
+            _MIN_PROPOSALS <= len(proposals) <= _MAX_PROPOSALS
+        ):
+            return f"Error: single/multiple questions need {_MIN_PROPOSALS}–{_MAX_PROPOSALS} proposals (question {idx + 1})."
+    elif isinstance(proposals, list) and len(proposals) > _MAX_PROPOSALS:
+        return f"Error: At most {_MAX_PROPOSALS} proposals allowed (question {idx + 1})."
+
+    return {
+        "question": q["question"],
+        "type": q_type,
+        "proposals": list(proposals) if isinstance(proposals, list) else [],
+        "allow_text": False if q_type == "text" else q.get("allow_text", True) is not False,
+        "placeholder": q.get("placeholder", "Tapez votre réponse…") if q_type == "text" else "",
+    }
 
 # Inline HTML template — self-contained, no external file.
 _HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -234,136 +231,45 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 
 class Tools:
-    # Class-level lock prevents parallel/double calls within the same process.
-    _is_running: bool = False
+    """Open WebUI tool for interactive questionnaires."""
+    _lock = asyncio.Lock()
 
     class Valves:
-        """Open WebUI Valves (no configuration required)."""
         pass
 
     def __init__(self):
         self.citation = False
 
-    # -----------------------------------------------------------------------
-    # PUBLIC TOOL METHOD
-    # -----------------------------------------------------------------------
     async def run_question_wizard(self, questions_json: str, __user__: dict = None):
+        """Launch a visual interactive questionnaire inside an iframe.
+
+        Call EXACTLY ONCE per turn.
+        Types: single | multiple | text    |    Proposals: 2-4 for single/multiple
+        Constraints: 1-13 questions total.
         """
-        Launch a visual interactive questionnaire inside an iframe.
-
-        ⚠️ IMPORTANT: Call this function EXACTLY ONCE per turn. Do NOT call it multiple
-        times in the same response.
-
-        Question types:
-        - "single"  / "single_choice"  -> pick one radio option.
-        - "multiple" / "multi_choice" -> pick many checkboxes.
-        - "text"    / "open"          -> free-form textarea (no proposals needed).
-
-        Constraints:
-        - 1 to 13 questions total.
-        - single/multiple MUST have exactly 2 to 4 proposals.
-        - text/open needs no proposals.
-
-        :param questions_json: JSON string describing the questionnaire.
-        :param __user__: Open WebUI injected user context dict.
-        :return: (HTMLResponse, context_dict) or plain error string on failure.
-        """
-        # --- Guard: prevent double / parallel execution -------------------
-        if Tools._is_running:
-            return "Error: Question Wizard is already running. Please wait for the current wizard to finish before starting a new one."
-        Tools._is_running = True
-
-        try:
+        async with self._lock:
             return await self._run_wizard(questions_json)
-        finally:
-            Tools._is_running = False
 
     async def _run_wizard(self, questions_json: str):
-        """Core logic — called with the lock already held."""
-        # --- Parse JSON ----------------------------------------------------
         try:
             payload = json.loads(questions_json)
-        except Exception:
-            return "Error: Invalid JSON. Please check the syntax of questions_json."
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON -- {e}"
 
         if not isinstance(payload, dict):
-            return "Error: Invalid JSON. The root element must be an object."
+            return "Error: The root element must be a JSON object."
 
         questions = payload.get("questions")
-        if not isinstance(questions, list):
-            return "Error: The JSON must contain a 'questions' array."
+        if not isinstance(questions, list) or not (1 <= len(questions) <= _MAX_QUESTIONS):
+            return f"Error: 'questions' must be an array with 1-{_MAX_QUESTIONS} items."
 
-        if not (1 <= len(questions) <= MAX_QUESTIONS):
-            return (
-                f"Error: The questionnaire must contain between 1 and "
-                f"{MAX_QUESTIONS} questions."
-            )
-
-        # --- Validate & normalise each question ----------------------------
         normalized = []
         for idx, q in enumerate(questions):
-            if not isinstance(q, dict):
-                return f"Error: Question {idx + 1} is not a valid object."
+            result = _validate_question(q, idx)
+            if isinstance(result, str):
+                return result
+            normalized.append(result)
 
-            if "question" not in q or not isinstance(q["question"], str):
-                return (
-                    f"Error: Missing or invalid 'question' field in question "
-                    f"{idx + 1}."
-                )
-
-            # Normalise type aliases
-            raw_type = q.get("type", "single")
-            if raw_type in ("single", "single_choice"):
-                q_type = "single"
-            elif raw_type in ("multiple", "multi_choice"):
-                q_type = "multiple"
-            elif raw_type in ("text", "open"):
-                q_type = "text"
-            else:
-                q_type = "single"
-
-            proposals = q.get("proposals", [])
-
-            # Validate proposal counts per type
-            if q_type in ("single", "multiple"):
-                if not isinstance(proposals, list) or not (
-                    MIN_PROPOSALS <= len(proposals) <= MAX_PROPOSALS
-                ):
-                    return (
-                        f"Error: Each single/multiple question must have between "
-                        f"{MIN_PROPOSALS} and {MAX_PROPOSALS} proposals. "
-                        f"(question {idx + 1})"
-                    )
-            else:
-                # text/open: proposals are optional, but max 4 if present
-                if isinstance(proposals, list) and len(proposals) > MAX_PROPOSALS:
-                    return (
-                        f"Error: At most {MAX_PROPOSALS} proposals even for "
-                        f"text questions. (question {idx + 1})"
-                    )
-
-            # allow_text only makes sense for single / multiple
-            allow_text = (
-                False
-                if q_type == "text"
-                else (q.get("allow_text", True) is not False)
-            )
-
-            normalized.append(
-                {
-                    "question": q["question"],
-                    "type": q_type,
-                    "proposals": list(proposals) if isinstance(proposals, list) else [],
-                    "allow_text": allow_text,
-                    "placeholder": (
-                        q.get("placeholder", "Tapez votre réponse…")
-                        if q_type == "text"
-                        else ""
-                    ),
-                }
-            )
-
-        # --- Assemble config dict for the frontend -------------------------
         config = {
             "title": payload.get("title", ""),
             "description": payload.get("description", ""),
@@ -371,21 +277,11 @@ class Tools:
             "questions": normalized,
         }
 
-        # Serialise with raw unicode, then escape '<' so the JSON never
-        # breaks out of the </script> tag in the HTML template.
-        config_json = json.dumps(config, ensure_ascii=False, separators=((",", ":")))
-        config_json = config_json.replace("<", "\\u003c")
-
-        # --- Build response ------------------------------------------------
-        html_content = _HTML_TEMPLATE.replace("__CONFIG_JSON__", config_json)
+        # Escape '<' so the JSON never breaks out of the </script> tag.
+        config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
         return (
-            HTMLResponse(
-                content=html_content,
-                headers={"Content-Disposition": "inline"},
-            ),
-            {
-                "status": "question_wizard_active",
-                "questions_count": len(config["questions"]),
-            },
+            HTMLResponse(content=_HTML_TEMPLATE.replace("__CONFIG_JSON__", config_json),
+                        headers={"Content-Disposition": "inline"}),
+            {"status": "question_wizard_active", "questions_count": len(config["questions"])},
         )
