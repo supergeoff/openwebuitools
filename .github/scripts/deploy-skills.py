@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
+import pathlib
 import re
 import sys
 from dataclasses import dataclass, field
@@ -553,6 +555,72 @@ def upsert(client: OpenWebUI, payload: SkillPayload, existing_ids: set[str]) -> 
 
 
 # ---------------------------------------------------------------------------
+# Local filesystem skill discovery
+# ---------------------------------------------------------------------------
+
+def discover_local_skills(skills_dir: str) -> list[SkillBundle]:
+    """Walk <skills_dir> and return a SkillBundle for every child dir
+    that contains a SKILL.md file.
+
+    Each bundle uses a synthetic source_url of the form
+    ``local://<repo>/<dir>`` so downstream logging still has a handle.
+    """
+    root = pathlib.Path(skills_dir)
+    if not root.is_dir():
+        return []
+
+    bundles: list[SkillBundle] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        if child.name.startswith("."):
+            continue
+        skill_md_path = child / "SKILL.md"
+        if not skill_md_path.is_file():
+            continue
+        try:
+            skill_md = skill_md_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            log.warning("skip %s: unreadable SKILL.md", child.name)
+            continue
+
+        target = GHTarget(
+            owner="local", repo=child.parent.name, ref="main",
+            path=str(child.relative_to(root)),
+        )
+        bundle = SkillBundle(
+            source_url=f"local://{child.parent.name}/{child.name}",
+            target=target,
+            skill_md=skill_md,
+        )
+
+        # Collect textual assets (same skip rules as _walk_files)
+        for file_path in child.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(child))
+            if rel == "SKILL.md":
+                continue
+            # skip dirs / files
+            parts = rel.split("/")
+            if any(p in SKIP_DIR_PARTS for p in parts[:-1]):
+                continue
+            if parts[-1] in SKIP_FILE_NAMES:
+                continue
+            try:
+                text = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                log.debug("skip binary asset %s", rel)
+                continue
+            bundle.assets.append((rel, text))
+
+        bundle.assets.sort(key=lambda x: x[0])
+        bundles.append(bundle)
+        log.info("discovered local skill %s (%d assets)", child.name, len(bundle.assets))
+    return bundles
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -569,12 +637,18 @@ def load_manifest(path: str) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Deploy SKILL.md-style skills from a manifest into OpenWebUI.",
-    )   
+    )
     ap.add_argument(
         "-m", "--manifest",
         default="skills/manifest.yaml",
         help="path to manifest yaml (default: skills/manifest.yaml)",
     )
+    ap.add_argument(
+        "-s", "--skills-dir",
+        default="skills",
+        help="local skills directory (default: skills)",
+    )
+
     ap.add_argument("--dry-run", action="store_true", help="do everything except the OpenWebUI write")
     ap.add_argument("-v", "--verbose", action="store_true")
     ap.add_argument(
@@ -591,16 +665,35 @@ def main() -> int:
         log.error("OPENWEBUI_URL and OPENWEBUI_API_KEY must be set (or use --dry-run)")
         return 2
 
+    gh = _gh_session()
+
+    # 0. Discover local skills from filesystem
+    local_bundles = discover_local_skills(args.skills_dir)
+    log.info("local skills: %d discovered", len(local_bundles))
+    payloads: list[SkillPayload] = []
+    for bundle in local_bundles:
+        payload = build_payload(bundle)
+        if payload is None:
+            continue
+
+        # Ensure SKILL.md frontmatter contains the script asset for
+        # run_question_wizard: the question_wizard.py tool ships as a
+        # standalone file; if the local skill references it the script
+        # can inline it as an asset.
+        log.info(
+            "built payload id=%s name=%r assets=%d size=%d",
+            payload.id, payload.name, len(bundle.assets), len(payload.content),
+        )
+        payloads.append(payload)
+
+    # 1. Load manifest + resolve remote skills
     try:
         urls = load_manifest(args.manifest)
     except (OSError, ValueError, yaml.YAMLError) as e:
         log.error("manifest: %s", e)
-        return 2
+        urls = []
     log.info("manifest: %d entries", len(urls))
 
-    gh = _gh_session()
-
-    # 1. Resolve manifest URLs -> concrete skill targets
     targets: list[tuple[str, GHTarget]] = []  # (source_url, target)
     for url in urls:
         try:
@@ -620,8 +713,7 @@ def main() -> int:
             targets.append((url, t))
             log.info("resolved %s -> %s/%s@%s:%s", url, t.owner, t.repo, t.ref, t.path or "/")
 
-    # 2. Fetch + flatten + build payload
-    payloads: list[SkillPayload] = []
+    # 2. Fetch + flatten + build payload (remote skills — appended after locals)
     for source_url, t in targets:
         try:
             bundle = fetch_bundle(gh, t, source_url)
@@ -633,6 +725,15 @@ def main() -> int:
         payload = build_payload(bundle)
         if payload is None:
             continue
+
+        # de-duplicate: skip if a local skill already claimed the id
+        if any(p.id == payload.id for p in payloads):
+            log.info(
+                "skip remote %s (id=%s) — local skill already registered",
+                source_url, payload.id,
+            )
+            continue
+
         log.info(
             "built payload id=%s name=%r assets=%d size=%d",
             payload.id, payload.name, len(bundle.assets), len(payload.content),

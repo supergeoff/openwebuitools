@@ -16,13 +16,14 @@
 # When <ref> is absent (repo root form) we default to `main`.
 # Drift is accepted: re-run the workflow to pick up upstream changes.
 
-skills:
-  # your own skills (replace with whatever you actually publish)
-  - https://github.com/supergeoff/skills
+# Manifest for *remote* skills (GitHub-hosted) only.
+# Local skills (skills/<name>/SKILL.md) are auto-discovered by
+# .github/scripts/deploy-skills.py and do NOT need to be listed here.
 
-  # upstream Anthropic skills (root layout is `skills/<name>/SKILL.md`)
+skills:
+  # ── Upstream skills ────────────────────────────────────────
   - https://github.com/obra/superpowers/tree/main/skills/brainstorming
 
-  # single-file SKILL.md somewhere
+  # ── Single-file SKILL.md example ───────────────────────────
   # - https://github.com/foo/bar/blob/main/path/to/SKILL.md
 
