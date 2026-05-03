@@ -162,7 +162,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   .free-text-input:focus { border-color: #000000; }
   .free-text-input:disabled { opacity: 0.5; background: #f0f0f0; cursor: not-allowed; }
   .free-textarea { width: 100%; min-height: 80px; background: #ffffff; color: #000000; border: 1px solid #cccccc; border-radius: 6px; padding: 10px; font-size: 0.9rem; outline: none; resize: vertical; transition: border-color 0.15s; }
-  .free-textarea:focus { border-color: #000000; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+  .free-textarea:focus { border-color: #000000; box-shadow: 0 0 0 3px rgba(0,0,0,0.1); }
   #nav-controls { padding: 12px 16px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   button { cursor: pointer; border: none; border-radius: 6px; padding: 8px 14px; font-size: 0.9rem; font-weight: 500; transition: background 0.15s, transform 0.05s; }
   button:active { transform: translateY(1px); }
@@ -193,7 +193,7 @@ _HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
   <div id="nav-controls">
     <button id="btn-prev">← Précédent</button>
-    <button id="btn-skip">Sauter le reste</button>
+    <button id="btn-skip">Envoyer maintenant</button>
     <button id="btn-next">Suivant →</button>
   </div>
 </div>
@@ -340,6 +340,14 @@ class Tools:
         Types: single | multiple | text    |    Proposals: 2-4 for single/multiple
         Constraints: 1-13 questions total.
         """
+        # Reject (don't queue) any concurrent / double call so the LLM gets a
+        # clear, immediate feedback signal instead of silently waiting.
+        if self._lock.locked():
+            return (
+                "Error: Question Wizard is already running. "
+                "You called `run_question_wizard` more than once in the same turn — "
+                "build ALL questions into a SINGLE JSON object and call the tool exactly ONCE."
+            )
         async with self._lock:
             return await self._run_wizard(questions_json)
 

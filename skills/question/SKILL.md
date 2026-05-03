@@ -276,6 +276,39 @@ await run_question_wizard(json.dumps([{"question": "OK?"])) # no! root must be {
 {"question": "Done?", "type": "single", "proposals": ["Yes"]}  # error!
 ```
 
+### ❌ Fabricating biased or leading proposals
+
+When the user has not expressed any preference, do **not** invent proposals
+that nudge them toward a particular answer. Proposals must reflect plausible,
+balanced options the user might actually pick — not your guess of what they
+"should" want, and not a stacked list designed to push a recommendation.
+
+```python
+# WRONG — proposals are stacked toward "React + Tailwind"
+{
+    "question": "Which stack do you want?",
+    "type": "single",
+    "proposals": [
+        "React + Tailwind (recommended)",
+        "React + Tailwind (fast)",
+        "Something messy and slow"
+    ]
+}
+```
+
+```python
+# RIGHT — neutral, balanced, with text fallback for unknown options
+{
+    "question": "Which stack do you want?",
+    "type": "single",
+    "proposals": ["React", "Vue", "Svelte", "Plain HTML"],
+    "allow_text": True
+}
+```
+
+If you genuinely cannot enumerate balanced options (e.g. open-ended ideation),
+use `type: "text"` instead of inventing fake choices.
+
 ## One-Liner Cues for LLMs
 
 **Before calling the tool, say this to yourself:**
