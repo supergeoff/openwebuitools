@@ -7,9 +7,8 @@ description: >
   The prompt itself lives in Langfuse (project "owui", text prompt "global",
   label "production"). This filter fetches it (cached) and injects it as the
   system message on every request.
-  It also injects the per-user Hindsight MCP bank routing instruction. The
-  filter never calls Hindsight directly; memory access must go through MCP
-  tools with the user's configured bankid.
+  The only per-user runtime value managed here is hindsight_bankid, exposed to
+  the Langfuse prompt as {{hindsight_bankid}}.
 """
 
 import logging
@@ -60,19 +59,11 @@ class Filter:
             default=300,
             description="Langfuse SDK cache TTL. Edits propagate after this delay.",
         )
-        hindsight_mcp_enabled: bool = Field(
-            default=True,
-            description="Inject Hindsight MCP routing instructions for the current user.",
-        )
-        hindsight_injection_prefix: str = Field(
-            default="[Hindsight MCP]",
-            description="Header used for injected Hindsight MCP routing.",
-        )
 
     class UserValves(BaseModel):
         hindsight_bankid: str = Field(
             default="",
-            description="Per-user Hindsight bankid. Required before Hindsight MCP memory tools may be used.",
+            description="Per-user Hindsight bankid passed to the Langfuse prompt.",
         )
 
     def __init__(self):
@@ -99,23 +90,32 @@ class Filter:
             log.warning("Langfuse client init failed: %s", exc)
             return None
 
-    def _fetch_policy(self) -> str:
+    def _compile_fallback(self, variables: dict) -> str:
+        bankid = variables.get("hindsight_bankid", "")
+        if not bankid:
+            return FALLBACK_POLICY
+        return f"{FALLBACK_POLICY}\n\nhindsight_bankid: {bankid}"
+
+    def _fetch_policy(self, variables: dict) -> str:
         """Fetch the prompt text from Langfuse (cached by the SDK). Fail open."""
         client = self._get_client()
         if client is None:
-            return FALLBACK_POLICY
+            return self._compile_fallback(variables)
         try:
             prompt = client.get_prompt(
                 self.valves.prompt_name,
                 label=self.valves.prompt_label,
                 cache_ttl_seconds=self.valves.cache_ttl_seconds,
             )
-            # Text prompt: compile() with no variables returns the raw string.
-            text = prompt.compile()
-            return text if isinstance(text, str) and text.strip() else FALLBACK_POLICY
+            text = prompt.compile(**variables)
+            return (
+                text
+                if isinstance(text, str) and text.strip()
+                else self._compile_fallback(variables)
+            )
         except Exception as exc:
             log.warning("Langfuse get_prompt failed (%s), using fallback.", exc)
-            return FALLBACK_POLICY
+            return self._compile_fallback(variables)
 
     def _get_user_valve(self, __user__: Optional[dict], key: str) -> Optional[str]:
         """Read OpenWebUI UserValves from dict or Pydantic-style objects."""
@@ -137,50 +137,21 @@ class Filter:
             value = self.user_valves.hindsight_bankid
         return str(value).strip() if value else ""
 
-    def _build_hindsight_mcp_instruction(self, bankid: str) -> str:
-        if not self.valves.hindsight_mcp_enabled:
-            return ""
-        prefix = self.valves.hindsight_injection_prefix.strip()
-        if bankid:
-            return "\n".join(
-                [
-                    prefix,
-                    "Use Hindsight MCP tools only when reading or writing memory for this user.",
-                    f"Always pass bankid: {bankid}",
-                    "Never call Hindsight through direct HTTP/API calls.",
-                ]
-            )
-        return "\n".join(
-            [
-                prefix,
-                "No per-user Hindsight bankid is configured.",
-                "Do not call Hindsight memory tools for this user.",
-                "Never call Hindsight through direct HTTP/API calls.",
-            ]
-        )
+    def _prompt_variables(self, __user__: Optional[dict]) -> dict:
+        return {"hindsight_bankid": self._resolve_bankid(__user__)}
 
     def _build_injected_prompt(
         self,
-        policy: str,
-        body: dict,
         __user__: Optional[dict],
     ) -> str:
-        sections = [policy.strip()]
-        bankid = self._resolve_bankid(__user__)
-        hindsight_instruction = self._build_hindsight_mcp_instruction(bankid)
-        if hindsight_instruction:
-            sections.append(hindsight_instruction)
-        return "\n\n".join(section for section in sections if section)
+        variables = self._prompt_variables(__user__)
+        return self._fetch_policy(variables).strip()
 
     def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         if not self.valves.enabled:
             return body
 
-        policy = self._fetch_policy()
-        if not policy:
-            return body
-
-        injected_prompt = self._build_injected_prompt(policy, body, __user__)
+        injected_prompt = self._build_injected_prompt(__user__)
         if not injected_prompt:
             return body
 
