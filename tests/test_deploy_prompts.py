@@ -32,6 +32,10 @@ class DeployPromptsParsingTests(unittest.TestCase):
         self.assertEqual(definition.label, "production")
         self.assertEqual(definition.type, "text")
         self.assertIn("{{hindsight_bankid}}", definition.prompt)
+        self.assertIn("SearXNG and crawl4ai", definition.prompt)
+        self.assertIn("Do not treat GitHub search alone as sufficient", definition.prompt)
+        self.assertIn("current coder workspace", definition.prompt)
+        self.assertIn("Google Drive, Docs, Sheets, or other external storage only", definition.prompt)
         self.assertNotIn("---", definition.prompt)
 
     def test_prompt_name_comes_from_filename_and_label_from_config(self):
