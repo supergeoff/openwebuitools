@@ -1,316 +1,175 @@
 ---
 name: question
-description: "When you need answers from the user — survey, preferences, requirements-gathering, feedback — you MUST use the Question Wizard tool. Never ask questions as plain text. This skill enforces the interactive questionnaire flow."
+description: "Use when an agent needs answers, preferences, requirements, feedback, survey data, or clarifications from the user in Open WebUI; route questions through Question Wizard instead of plain chat."
 tags: ["openwebui", "tools", "interaction", "questionnaire", "ux"]
 ---
 
 # Ask Questions via Question Wizard
 
-When you need information from the user (any form of questioning), you MUST use the Question Wizard tool — not free-text questions in the chat.
+When you need information from the user, use `run_question_wizard`; do not ask questions as plain text in chat. This skill targets Question Wizard version 0.6.5.
 
 ## Universal Router
 
-This skill is THE way to ask questions to the user. It supersedes all other question-asking patterns. Any skill or context that needs user input must route through `run_question_wizard`.
+This skill is the routing point for user questions. Any other skill or context that needs user input must use `run_question_wizard`, including brainstorming, requirement clarification, feedback collection, assumption checks, and survey flows.
 
-**Other skills that ask questions:**
-- **brainstorming** — when exploring requirements, use `run_question_wizard` to present options and gather preferences.
-- **challenger mode** (system prompt) — when surfacing assumptions, use `run_question_wizard` for confirmation.
-- **openspec skills** — when clarifying requirements or presenting design choices, use `run_question_wizard`.
-- **Any other skill** — if it would ask the user a question, route it here.
-
-Do not duplicate question-asking logic in other skills. Reference this skill instead.
-
-<REASONING>
-Ask yourself: "Am I trying to get answers from the user?"
-If YES → DO NOT proceed. Invoke this skill immediately.
-Only skip if the user explicitly says "just guess" or similar opt-out language.
-</REASONING>
+Only skip the wizard when the user explicitly opts out, for example: "just guess", "decide yourself", or "do not ask me".
 
 <HARD-GATE>
-Do NOT write any questions as plain text in your response.
-Do NOT call `run_question_wizard` more than once.
-Build ALL questions into a SINGLE JSON object wrapped by `json.dumps(...)`, then call `run_question_wizard` Exactly ONCE.
+Do NOT write questions as plain text in your response.
+Do NOT call `run_question_wizard` more than once per user request.
+Build all questions into one JSON value, serialize it with `json.dumps(...)`, and pass that JSON string to `run_question_wizard`.
 </HARD-GATE>
 
-## When to Invoke
+## Invocation Rules
 
-| Trigger | Action |
+| Rule | Requirement |
 |---|---|
-| User asks for feedback/opinions | → Question Wizard |
-| You need to narrow down requirements | → Question Wizard |
-| You want user preferences/priorities | → Question Wizard |
-| You need to collect survey data | → Question Wizard |
-| You need to clarify ambiguous input | → Question Wizard (if 2+ clarifications needed) |
+| One call | Put every question in one payload and call `run_question_wizard` once. |
+| JSON string | The function argument is a string produced by `json.dumps(...)`, not a Python dict or list. |
+| Canonical payload | Prefer the canonical shape: one root object with `questions`. |
+| Proposals | `single` and `multiple` questions require 2-4 proposal strings. |
+| Text questions | Use `type: "text"` for open-ended answers; do not invent fake proposals. |
 
-## The Rules
+The tool has two duplicate protections. Concurrent non-identical calls hit the class-level lock and return an error. Duplicate identical calls by the same user within 8 seconds return a blank 1px response, so never retry the same payload as a second wizard.
 
-### Rule 1: ONE call only
+## Canonical JSON Shape
 
-Build every question into **one** JSON object, wrap it with `json.dumps(...)`, then call `run_question_wizard` **Exactly once**. The tool has a class-level lock — calling it twice returns an error.
-
-### Rule 2: JSON string via json.dumps
-
-The parameter is a **JSON string** produced by `json.dumps(...)`. Never pass a dict or array directly.
-
-### Rule 3: min 2 proposals for single / multiple
-
-Questions of type `single` or `multiple` **must** have between 2 and 4 proposals. One proposal is not valid.
-
-## JSON Shape
-
-Root MUST be an **object** `{}`, never an array `[]`.
+Use this canonical shape even though the tool is tolerant of legacy shorthand inputs:
 
 ```python
-json.dumps({
-    "title": "Your title",          # optional
-    "description": "Context",        # optional
-    "submit_label": "Envoyer",       # optional, default "Envoyer"
-    "questions": [                   # REQUIRED — 1 to 13 items
-        { /* question object */ },
+import json
+
+questions_json = json.dumps({
+    "title": "Project Discovery",       # optional
+    "description": "Short context",      # optional
+    "submit_label": "Submit",            # optional, default `"Submit"`
+    "questions": [                       # required, 1-13 items
+        {
+            "id": "priority",            # optional stable machine key
+            "question": "What matters most?",
+            "type": "single",
+            "proposals": ["Speed", "Quality", "Cost"],
+            "required": True
+        }
     ]
 })
 ```
 
-## Question Types
+## Question Object
 
-### single — pick ONE (radio)
+| Key | Applies to | Notes |
+|---|---|---|
+| `question` | all | Required user-facing question text. |
+| `type` | all | Use `single`, `multiple`, or `text`; include it for clarity. |
+| `proposals` | `single`, `multiple` | Required, 2-4 strings. |
+| `id` | all | Optional stable machine-readable identifier; defaults to `q1`, `q2`, etc. |
+| `required` | all | Optional boolean, default `false`. |
+| `allow_text` | `single`, `multiple` | Optional boolean, default `true`; adds an "Other" text option. |
+| `placeholder` | `text` | Optional text-area placeholder. |
+| `other_label` | `single`, `multiple` | Optional label for the free-text option. |
+| `other_placeholder` | `single`, `multiple` | Optional placeholder for the free-text option. |
+| `min_selections` | `multiple` | Optional integer; default is `1` when required, otherwise `0`. |
+| `max_selections` | `multiple` | Optional integer; cannot exceed available choices plus the text option when enabled. |
+| `min_length` | `text` | Optional integer; default is `1` when required, otherwise `0`. |
+| `max_length` | `text` | Optional integer; must be greater than or equal to `min_length`. |
 
-```python
-{
-    "question": "Which option?",
-    "type": "single",
-    "proposals": ["Yes", "No", "Maybe"],   # 2-4 strings, REQUIRED
-    "allow_text": True                     # optional
-}
-```
+For `single`, `required: true` means one answer is required and `max_selections` is always 1. For `text`, `allow_text` is ignored because the answer itself is free text.
 
-### multiple — pick MANY (checkboxes)
+## Accepted Aliases
 
-```python
-{
-    "question": "Which features?",
-    "type": "multiple",
-    "proposals": ["A", "B", "C", "D"],     # 2-4 strings, REQUIRED
-    "allow_text": True
-}
-```
+Prefer canonical keys, but the tool accepts model-friendly aliases:
 
-### text — free writing (textarea)
-
-```python
-{
-    "question": "Any comments?",
-    "type": "text",
-    "placeholder": "Write here..."         # optional
-}
-```
-
-## Model-Friendly Aliases (Accepted by the Tool)
-
-The tool is **lenient** with field names to help models that don't follow the spec exactly:
-
-| Canonical key | Accepted aliases |
+| Canonical | Accepted aliases |
 |---|---|
 | `proposals` | `options`, `choices`, `answers` |
+| `id` | `key`, `name` |
 | `type: "single"` | `single_choice`, `radio` |
 | `type: "multiple"` | `multi_choice`, `checkbox` |
 | `type: "text"` | `open`, `textarea` |
 
-If `type` is omitted but `proposals` (or aliases) are present, the tool guesses `single`.
+The aliases `key` and `name` are accepted for `id`. If `type` is missing but proposals are present, the tool defaults to `single` and may emit a warning.
 
-## Quick Decision Tree
+## Examples
 
-```dot
-digraph question_flow {
-    rankdir=LR;
-    "Need user input?" [shape=diamond];
-    "Yes" [shape=box];
-    "Single answer" [shape=diamond];
-    "Use: type=single, 2-4 proposals" [shape=box];
-    "Multiple answers" [shape=box, label="Use: type=multiple, 2-4 proposals"];
-    "Open text" [shape=box, label="Use: type=text, no proposals"];
-    "Collect all questions" [shape=box];
-    "json.dumps(object)" [shape=box];
-    "run_question_wizard ONCE" [shape=doublecircle];
-    
-    "Need user input?" -> "Yes";
-    "Yes" -> "Single answer";
-    "Single answer" -> "Use: type=single, 2-4 proposals" [label="one pick"];
-    "Single answer" -> "Multiple answers" [label="many picks"];
-    "Single answer" -> "Open text" [label="free text"];
-    "Use: type=single, 2-4 proposals" -> "Collect all questions";
-    "Multiple answers" -> "Collect all questions";
-    "Open text" -> "Collect all questions";
-    "Collect all questions" -> "json.dumps(object)";
-    "json.dumps(object)" -> "run_question_wizard ONCE";
-}
+### Requirements Clarification
+
+```python
+import json
+
+await run_question_wizard(json.dumps({
+    "title": "Build Scope",
+    "description": "Choose the constraints before implementation.",
+    "questions": [
+        {
+            "id": "scope",
+            "question": "Which scope should I implement first?",
+            "type": "single",
+            "proposals": ["Core flow", "Admin flow", "Reporting"],
+            "required": True
+        },
+        {
+            "id": "constraints",
+            "question": "Which constraints matter?",
+            "type": "multiple",
+            "proposals": ["Speed", "Maintainability", "Low cost", "Security"],
+            "required": True,
+            "min_selections": 1,
+            "max_selections": 2,
+            "allow_text": True,
+            "other_label": "Other:",
+            "other_placeholder": "Type another constraint"
+        },
+        {
+            "id": "notes",
+            "question": "Anything else I should know?",
+            "type": "text",
+            "placeholder": "Add context, edge cases, or exclusions...",
+            "max_length": 500
+        }
+    ]
+}))
+```
+
+### Feedback Collection
+
+```python
+import json
+
+await run_question_wizard(json.dumps({
+    "title": "Design Feedback",
+    "questions": [
+        {
+            "id": "fit",
+            "question": "Does this match your intent?",
+            "type": "single",
+            "proposals": ["Yes", "Partially", "No"],
+            "required": True,
+            "allow_text": False
+        },
+        {
+            "id": "changes",
+            "question": "What should change?",
+            "type": "text",
+            "required": True,
+            "min_length": 5
+        }
+    ]
+}))
 ```
 
 ## Common Mistakes
 
 | Mistake | Fix |
 |---|---|
-| Root is `[` not `{}` | Wrap in `{"questions": [...]}` |
-| `< 2` or `> 4` proposals | Must be 2-4 |
-| Missing `question` key | Every item needs `"question": "..."` |
-| Using `options` instead of `proposals` | `options` is accepted as alias, but prefer `proposals` |
-| Calling twice in one turn | Build one JSON, one call |
-| Forgetting `json.dumps()` | Parameter is a **string**, not a dict |
-| One proposal only | Add at least one more, or use `type: "text"` |
+| Asking follow-up questions in plain text | Use one `run_question_wizard` payload. |
+| Calling the wizard twice | Merge every question into one payload before calling. |
+| Passing a dict directly | Pass `json.dumps(payload)`. |
+| Using one proposal | Add a second balanced proposal or use `type: "text"`. |
+| Using more than four proposals | Reduce to the four most useful choices or use text. |
+| Relying on shorthand payloads | Use the canonical shape with a root object and `questions`. |
+| Retrying the same payload | Avoid duplicate identical calls; the second returns a blank 1px response. |
+| Adding biased choices | Use neutral proposals or a text question. |
 
-## Complete Examples
+## One-Line Cue
 
-### Example 1: Quick Project Clarification
-
-User says: "Build me something for my shop."
-
-❌ WRONG — asking in plain text:
-```
-Sure! To help me narrow it down:
-1. What kind of shop is it?
-2. What tech stack do you prefer?
-3. Any budget constraints?
-```
-
-✅ RIGHT — using Question Wizard:
-
-```python
-import json
-
-json.dumps({
-    "title": "Project Discovery",
-    "description": "Let's narrow down what you need.",
-    "questions": [
-        {
-            "question": "What kind of shop?",
-            "type": "single",
-            "proposals": ["E-commerce", "Portfolio", "Blog", "SaaS"]
-        },
-        {
-            "question": "Which tech stack do you prefer?",
-            "type": "multiple",
-            "proposals": ["React", "Vue", "Python", "Node.js"],
-            "allow_text": True
-        },
-        {
-            "question": "Any specific requirements or constraints?",
-            "type": "text",
-            "placeholder": "Tell me anything relevant..."
-        }
-    ]
-})
-```
-
-### Example 2: Feedback on a Design Proposal
-
-User says: "What do you think of this design?"
-
-After giving your analysis, instead of asking follow-ups in text:
-
-```python
-import json
-
-json.dumps({
-    "title": "Design Feedback",
-    "questions": [
-        {"question": "Does this match your vision?", "type": "single", "proposals": ["Yes", "Partially", "No"]},
-        {"question": "Which parts need changes?", "type": "multiple", "proposals": ["Layout", "Colors", "Typography", "Functionality"], "allow_text": False},
-        {"question": "What would you change?", "type": "text"}
-    ]
-})
-```
-
-### Example 3: Employee Onboarding Status
-
-User says: "Help me check on new hire onboarding."
-
-```python
-import json
-
-json.dumps({
-    "title": "Onboarding Check",
-    "description": "Quick status update.",
-    "submit_label": "Send",
-    "questions": [
-        {"question": "Was IT setup complete on day one?", "type": "single", "proposals": ["Yes", "No", "In Progress"]},
-        {"question": "What's still pending?", "type": "multiple", "proposals": ["Email", "Access Cards", "Software", "Training"], "allow_text": True},
-        {"question": "Any blockers to report?", "type": "text", "placeholder": "Describe any issues..."}
-    ]
-})
-```
-
-## Anti-Patterns
-
-### ❌ Asking questions in plain text
-
-```
-Great, let me ask you a few things:
-- What's your timeline?
-- What's the budget?
-```
-
-Every question must go through the tool, period.
-
-### ❌ Multiple wizard calls
-
-```python
-# WRONG — two calls in one response
-await run_question_wizard(json.dumps({"questions": [q1]}))
-await run_question_wizard(json.dumps({"questions": [q2]}))
-```
-
-One call. All questions inside it.
-
-### ❌ Passing a dict or array directly
-
-```python
-# WRONG — questions_json is typed as str
-await run_question_wizard({"questions": [q1]})              # no!
-await run_question_wizard(json.dumps([{"question": "OK?"])) # no! root must be {}
-```
-
-### ❌ Only 1 proposal for single/multiple
-
-```python
-# WRONG — needs 2-4 proposals
-{"question": "Done?", "type": "single", "proposals": ["Yes"]}  # error!
-```
-
-### ❌ Fabricating biased or leading proposals
-
-When the user has not expressed any preference, do **not** invent proposals
-that nudge them toward a particular answer. Proposals must reflect plausible,
-balanced options the user might actually pick — not your guess of what they
-"should" want, and not a stacked list designed to push a recommendation.
-
-```python
-# WRONG — proposals are stacked toward "React + Tailwind"
-{
-    "question": "Which stack do you want?",
-    "type": "single",
-    "proposals": [
-        "React + Tailwind (recommended)",
-        "React + Tailwind (fast)",
-        "Something messy and slow"
-    ]
-}
-```
-
-```python
-# RIGHT — neutral, balanced, with text fallback for unknown options
-{
-    "question": "Which stack do you want?",
-    "type": "single",
-    "proposals": ["React", "Vue", "Svelte", "Plain HTML"],
-    "allow_text": True
-}
-```
-
-If you genuinely cannot enumerate balanced options (e.g. open-ended ideation),
-use `type: "text"` instead of inventing fake choices.
-
-## One-Liner Cues for LLMs
-
-**Before calling the tool, say this to yourself:**
-
-> "I need to ask the user something → json.dumps ONE object with ALL questions → call run_question_wizard ONCE → every single/multiple MUST have 2-4 proposals."
+Before calling the tool, say: "I need user input -> one canonical JSON object -> `json.dumps(...)` -> one `run_question_wizard` call -> `single`/`multiple` use 2-4 balanced proposals."
