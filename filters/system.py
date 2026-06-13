@@ -7,16 +7,13 @@ description: >
   The prompt itself lives in Langfuse (project "owui", text prompt "global",
   label "production"). This filter fetches it (cached) and injects it as the
   system message on every request.
-  It can also fetch Hindsight memory and inject it with bankid set to the
-  OpenWebUI user name so each user gets a separate memory bank.
-  If Langfuse or Hindsight is unreachable, the chat request still proceeds.
+  It also injects the per-user Hindsight MCP bank routing instruction. The
+  filter never calls Hindsight directly; memory access must go through MCP
+  tools with the user's configured bankid.
 """
 
-import json
 import logging
-import urllib.error
-import urllib.request
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -63,38 +60,24 @@ class Filter:
             default=300,
             description="Langfuse SDK cache TTL. Edits propagate after this delay.",
         )
-        hindsight_enabled: bool = Field(
+        hindsight_mcp_enabled: bool = Field(
             default=True,
-            description="Fetch and inject Hindsight memory for the current user.",
-        )
-        hindsight_host: str = Field(
-            default="https://hindsight.supergeoff.top",
-            description="Hindsight base URL.",
-        )
-        hindsight_path: str = Field(
-            default="/recall",
-            description="Hindsight endpoint path that accepts a JSON payload.",
-        )
-        hindsight_auth_header: str = Field(
-            default="",
-            description='Optional Authorization header value, e.g. "Bearer ..." or "Basic ...".',
-            json_schema_extra={"input": {"type": "password"}},
-        )
-        hindsight_timeout_seconds: float = Field(
-            default=10.0,
-            description="Timeout for Hindsight memory fetches.",
-        )
-        hindsight_limit: int = Field(
-            default=12,
-            description="Maximum number of memory items requested from Hindsight.",
+            description="Inject Hindsight MCP routing instructions for the current user.",
         )
         hindsight_injection_prefix: str = Field(
-            default="[Hindsight Memory]",
-            description="Header used for injected Hindsight memory.",
+            default="[Hindsight MCP]",
+            description="Header used for injected Hindsight MCP routing.",
+        )
+
+    class UserValves(BaseModel):
+        hindsight_bankid: str = Field(
+            default="",
+            description="Per-user Hindsight bankid. Required before Hindsight MCP memory tools may be used.",
         )
 
     def __init__(self):
         self.valves = self.Valves()
+        self.user_valves = self.UserValves()
         self._client = None
 
     def _get_client(self):
@@ -134,122 +117,47 @@ class Filter:
             log.warning("Langfuse get_prompt failed (%s), using fallback.", exc)
             return FALLBACK_POLICY
 
-    def _resolve_bankid(self, __user__: Optional[dict]) -> str:
-        """Use the OpenWebUI user name as Hindsight bankid, with stable fallbacks."""
+    def _get_user_valve(self, __user__: Optional[dict], key: str) -> Optional[str]:
+        """Read OpenWebUI UserValves from dict or Pydantic-style objects."""
         if not __user__:
-            return "anonymous"
-        for key in ("name", "email", "id"):
-            value = __user__.get(key)
-            if value is None:
-                continue
-            text = str(value).strip()
-            if text:
-                return text
-        return "anonymous"
-
-    def _last_user_message(self, body: dict) -> str:
-        for message in reversed(body.get("messages", [])):
-            if message.get("role") == "user":
-                content = message.get("content", "")
-                if isinstance(content, str):
-                    return content
-                try:
-                    return json.dumps(content, ensure_ascii=False)
-                except TypeError:
-                    return str(content)
-        return ""
-
-    def _hindsight_url(self) -> str:
-        host = self.valves.hindsight_host.rstrip("/")
-        path = self.valves.hindsight_path or ""
-        if path and not path.startswith("/"):
-            path = f"/{path}"
-        return f"{host}{path}"
-
-    def _coerce_hindsight_text(self, value: Any) -> str:
-        if value is None:
             return ""
-        if isinstance(value, str):
-            return value.strip()
-        if isinstance(value, list):
-            parts = [self._coerce_hindsight_text(item) for item in value]
-            return "\n".join(part for part in parts if part)
-        if isinstance(value, dict):
-            for key in (
-                "context",
-                "memory",
-                "memories",
-                "result",
-                "results",
-                "answer",
-                "content",
-                "text",
-            ):
-                if key in value:
-                    text = self._coerce_hindsight_text(value[key])
-                    if text:
-                        return text
-            if {"role", "content"} <= value.keys():
-                return self._coerce_hindsight_text(value["content"])
-            return ""
-        return str(value).strip()
+        user_valves = (__user__.get("valves", {}) if __user__ else {}) or {}
+        if isinstance(user_valves, dict):
+            return user_valves.get(key, "")
+        if hasattr(user_valves, "model_dump"):
+            return user_valves.model_dump().get(key, "")
+        if hasattr(user_valves, "dict"):
+            return user_valves.dict().get(key, "")
+        return getattr(user_valves, key, "")
 
-    def _fetch_hindsight_memory(
-        self,
-        bankid: str,
-        body: dict,
-        __user__: Optional[dict],
-    ) -> str:
-        """Fetch memory from Hindsight. It must receive bankid per OpenWebUI user."""
-        if not self.valves.hindsight_enabled:
-            return ""
-        if not self.valves.hindsight_host:
-            return ""
+    def _resolve_bankid(self, __user__: Optional[dict]) -> str:
+        """Use only the explicit per-user Hindsight bankid valve."""
+        value = self._get_user_valve(__user__, "hindsight_bankid")
+        if not value:
+            value = self.user_valves.hindsight_bankid
+        return str(value).strip() if value else ""
 
-        try:
-            payload = {
-                "bankid": bankid,
-                "query": self._last_user_message(body),
-                "messages": body.get("messages", []),
-                "limit": self.valves.hindsight_limit,
-                "user": {
-                    "id": (__user__ or {}).get("id"),
-                    "email": (__user__ or {}).get("email"),
-                    "name": (__user__ or {}).get("name"),
-                },
-            }
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            }
-            if self.valves.hindsight_auth_header:
-                headers["Authorization"] = self.valves.hindsight_auth_header
-
-            request = urllib.request.Request(
-                self._hindsight_url(),
-                data=data,
-                headers=headers,
-                method="POST",
+    def _build_hindsight_mcp_instruction(self, bankid: str) -> str:
+        if not self.valves.hindsight_mcp_enabled:
+            return ""
+        prefix = self.valves.hindsight_injection_prefix.strip()
+        if bankid:
+            return "\n".join(
+                [
+                    prefix,
+                    "Use Hindsight MCP tools only when reading or writing memory for this user.",
+                    f"Always pass bankid: {bankid}",
+                    "Never call Hindsight through direct HTTP/API calls.",
+                ]
             )
-
-            with urllib.request.urlopen(
-                request, timeout=self.valves.hindsight_timeout_seconds
-            ) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-        except urllib.error.HTTPError as exc:
-            log.warning("Hindsight request failed with HTTP %s.", exc.code)
-            return ""
-        except Exception as exc:
-            log.warning("Hindsight request failed: %s", exc)
-            return ""
-
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            parsed = raw
-
-        return self._coerce_hindsight_text(parsed)
+        return "\n".join(
+            [
+                prefix,
+                "No per-user Hindsight bankid is configured.",
+                "Do not call Hindsight memory tools for this user.",
+                "Never call Hindsight through direct HTTP/API calls.",
+            ]
+        )
 
     def _build_injected_prompt(
         self,
@@ -259,10 +167,9 @@ class Filter:
     ) -> str:
         sections = [policy.strip()]
         bankid = self._resolve_bankid(__user__)
-        memory = self._fetch_hindsight_memory(bankid, body, __user__)
-        if memory:
-            prefix = self.valves.hindsight_injection_prefix.strip()
-            sections.append(f"{prefix}\n{memory.strip()}" if prefix else memory.strip())
+        hindsight_instruction = self._build_hindsight_mcp_instruction(bankid)
+        if hindsight_instruction:
+            sections.append(hindsight_instruction)
         return "\n\n".join(section for section in sections if section)
 
     def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
