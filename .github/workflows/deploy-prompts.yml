@@ -1,0 +1,32 @@
+name: Deploy Prompts
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'prompts/**'
+      - '.github/scripts/deploy-prompts.py'
+      - '.github/workflows/deploy-prompts.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-prompts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install langfuse
+
+      - name: Deploy prompts to Langfuse
+        env:
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PROMPT_LABEL: ${{ secrets.LANGFUSE_PROMPT_LABEL }}
+        run: python .github/scripts/deploy-prompts.py

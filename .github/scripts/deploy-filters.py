@@ -4,6 +4,13 @@ import requests
 import sys
 from pathlib import Path
 
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        print(f"Error: {name} environment variable is required.")
+        sys.exit(1)
+    return value
+
 def get_installed_functions(base_url: str, headers: dict) -> list:
     resp = requests.get(
         f"{base_url}/api/v1/functions/",
@@ -66,11 +73,8 @@ def deploy_filter(base_url: str, api_key: str, filter_file: Path, installed_func
     return False
 
 def main():
-    base_url = os.getenv("OPENWEBUI_URL", "http://localhost:3000").rstrip("/")
-    api_key = os.getenv("OPENWEBUI_API_KEY")
-    if not api_key:
-        print("Error: OPENWEBUI_API_KEY environment variable is required.")
-        sys.exit(1)
+    base_url = require_env("OPENWEBUI_URL").rstrip("/")
+    api_key = require_env("OPENWEBUI_API_KEY")
 
     filter_dir = Path("filters")
     if not filter_dir.exists():

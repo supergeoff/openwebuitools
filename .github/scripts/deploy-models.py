@@ -8,6 +8,14 @@ import sys
 from pathlib import Path
 
 
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        print(f"Error: {name} environment variable is required.")
+        sys.exit(1)
+    return value
+
+
 def parse_md_file(path: Path) -> tuple[dict, str]:
     """Parse a markdown file with YAML frontmatter.
 
@@ -72,11 +80,8 @@ def deploy_model(base_url: str, api_key: str, model_data: dict):
 
 
 def main():
-    base_url = os.getenv("OPENWEBUI_URL", "http://localhost:3000").rstrip("/")
-    api_key = os.getenv("OPENWEBUI_API_KEY")
-    if not api_key:
-        print("Error: OPENWEBUI_API_KEY environment variable is required.")
-        sys.exit(1)
+    base_url = require_env("OPENWEBUI_URL").rstrip("/")
+    api_key = require_env("OPENWEBUI_API_KEY")
 
     models_dir = Path("models")
     if not models_dir.exists():
