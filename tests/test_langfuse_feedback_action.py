@@ -149,6 +149,10 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
             self.assertTrue(action["icon_url"].startswith("https://"))
             self.assertTrue(action["icon_url"].endswith(".svg"))
 
+        actions_by_id = {action["id"]: action for action in module.Action.actions}
+        self.assertTrue(actions_by_id["positive"]["icon_url"].endswith("/smile.svg"))
+        self.assertTrue(actions_by_id["negative"]["icon_url"].endswith("/frown.svg"))
+
     def test_prompt_issue_collects_comment_and_scores_negative_feedback(self):
         module = load_action_module()
         scores = []

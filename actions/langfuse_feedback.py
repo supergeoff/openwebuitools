@@ -24,12 +24,12 @@ class Action:
         {
             "id": "positive",
             "name": "Positive",
-            "icon_url": f"{ICON_BASE_URL}/thumbs-up.svg",
+            "icon_url": f"{ICON_BASE_URL}/smile.svg",
         },
         {
             "id": "negative",
             "name": "Negative",
-            "icon_url": f"{ICON_BASE_URL}/thumbs-down.svg",
+            "icon_url": f"{ICON_BASE_URL}/frown.svg",
         },
         {
             "id": "prompt_issue",
