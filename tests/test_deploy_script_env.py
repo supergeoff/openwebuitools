@@ -66,3 +66,17 @@ class DeployScriptEnvTests(unittest.TestCase):
                 self.assertNotRegex(source, r"os\.getenv\([^\n]+,")
                 self.assertNotIn("DEFAULT_LANGFUSE_HOST", source)
                 self.assertNotIn("DEFAULT_LABEL", source)
+
+    def test_deploy_skills_workflow_runs_when_deploy_script_changes(self):
+        workflow = ROOT / ".github" / "workflows" / "deploy-skills.yml"
+        source = workflow.read_text(encoding="utf-8")
+
+        self.assertIn("'.github/scripts/deploy-skills.py'", source)
+        self.assertIn("'.github/workflows/deploy-skills.yml'", source)
+
+    def test_deploy_tools_workflow_runs_when_deploy_script_changes(self):
+        workflow = ROOT / ".github" / "workflows" / "deploy-tools.yml"
+        source = workflow.read_text(encoding="utf-8")
+
+        self.assertIn("'.github/scripts/deploy-tools.py'", source)
+        self.assertIn("'.github/workflows/deploy-tools.yml'", source)

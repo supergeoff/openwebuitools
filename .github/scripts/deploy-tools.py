@@ -29,6 +29,17 @@ def tool_exists(installed_tools: list, tool_id: str) -> bool:
     return any(t.get("id") == tool_id for t in installed_tools)
 
 
+def slugify(value: str) -> str:
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9]+", "_", value)
+    value = value.strip("_")
+    return value or "tool"
+
+
+def display_name_for(tool_id: str) -> str:
+    return "_".join(part.capitalize() for part in tool_id.split("_") if part)
+
+
 def parse_frontmatter(content: str) -> dict:
     """Parse the docstring frontmatter at the top of a Tool file.
 
@@ -50,13 +61,13 @@ def parse_frontmatter(content: str) -> dict:
 def deploy_tool(base_url: str, api_key: str, tool_file: Path, installed_tools: list):
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    tool_id = tool_file.stem
+    tool_id = slugify(tool_file.stem)
 
     with open(tool_file, "r") as f:
         content = f.read()
 
     meta = parse_frontmatter(content)
-    name = meta.get("title") or tool_id.replace("_", " ").replace("-", " ").title()
+    name = display_name_for(tool_id)
     description = meta.get("description", "")
 
     payload = {

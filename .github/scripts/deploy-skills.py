@@ -400,9 +400,13 @@ def parse_frontmatter(md: str) -> tuple[dict, str]:
 
 def slugify(s: str) -> str:
     s = s.strip().lower()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = s.strip("-")
+    s = re.sub(r"[^a-z0-9]+", "_", s)
+    s = s.strip("_")
     return s or "skill"
+
+
+def display_name_for(sid: str) -> str:
+    return "_".join(part.capitalize() for part in sid.split("_") if part)
 
 
 def fence_lang_for(relpath: str) -> str:
@@ -475,6 +479,7 @@ def build_payload(bundle: SkillBundle) -> SkillPayload | None:
         )
         return None
     sid = slugify(name)
+    display_name = display_name_for(sid)
     description = fm.get("description")
     if description is not None:
         description = str(description).strip()
@@ -485,7 +490,7 @@ def build_payload(bundle: SkillBundle) -> SkillPayload | None:
     tags = [str(t) for t in tags]
 
     content = flatten(bundle)
-    return SkillPayload(id=sid, name=name, description=description, content=content, tags=tags)
+    return SkillPayload(id=sid, name=display_name, description=description, content=content, tags=tags)
 
 
 # ---------------------------------------------------------------------------

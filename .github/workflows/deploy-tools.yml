@@ -5,6 +5,8 @@ on:
     branches: [ main ]
     paths:
       - 'tools/**'
+      - '.github/scripts/deploy-tools.py'
+      - '.github/workflows/deploy-tools.yml'
   workflow_dispatch:
 
 jobs:
