@@ -1,4 +1,7 @@
 import importlib.util
+import asyncio
+import inspect
+import logging
 import sys
 import types
 import unittest
@@ -31,6 +34,13 @@ def load_filter_module():
     return module
 
 
+def run_inlet(filter_, body, **kwargs):
+    result = filter_.inlet(body, **kwargs)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
 class SystemFilterTest(unittest.TestCase):
     def test_langfuse_prompt_receives_hindsight_bankid_from_user_valve_only(self):
         module = load_filter_module()
@@ -57,7 +67,7 @@ class SystemFilterTest(unittest.TestCase):
         }
         body = {"messages": [{"role": "user", "content": "Salut"}]}
 
-        result = filter_.inlet(body, __user__=user)
+        result = run_inlet(filter_, body, __user__=user)
 
         self.assertEqual(calls, [{"hindsight_bankid": "geoff-bank"}])
         content = result["messages"][0]["content"]
@@ -84,7 +94,7 @@ class SystemFilterTest(unittest.TestCase):
         filter_._client = Client()
 
         body = {"messages": [{"role": "user", "content": "Hello"}]}
-        result = filter_.inlet(body, __user__={"valves": UserValves()})
+        result = run_inlet(filter_, body, __user__={"valves": UserValves()})
 
         self.assertEqual(result["messages"][0]["content"], "bankid=alice-bank")
 
@@ -106,7 +116,8 @@ class SystemFilterTest(unittest.TestCase):
         filter_._client = Client()
 
         body = {"messages": [{"role": "user", "content": "Hello"}]}
-        result = filter_.inlet(
+        result = run_inlet(
+            filter_,
             body,
             __user__={"id": "user-123", "email": "geoff@example.com", "name": "Geoff"},
         )
@@ -151,14 +162,91 @@ class SystemFilterTest(unittest.TestCase):
                 return Prompt()
 
         filter_._client = Client()
-        result = filter_.inlet(
-            body, __user__={"name": "Alice", "valves": {"hindsight_bankid": "Alice"}}
+        result = run_inlet(
+            filter_,
+            body,
+            __user__={"name": "Alice", "valves": {"hindsight_bankid": "Alice"}},
         )
 
         self.assertEqual(result["messages"][0]["role"], "system")
         content = result["messages"][0]["content"]
         self.assertTrue(content.startswith("GLOBAL POLICY Alice"))
         self.assertTrue(content.endswith("Existing model policy."))
+
+    def test_forced_tool_ids_are_added_without_duplicates(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.forced_tool_ids = "alpha, beta, alpha"
+
+        body = {
+            "tool_ids": ["existing", "alpha"],
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        async def no_unresolved(tool_ids, __request__=None):
+            return []
+
+        filter_._get_unresolved_forced_tool_ids = no_unresolved
+
+        result = run_inlet(filter_, body)
+
+        self.assertEqual(result["tool_ids"], ["existing", "alpha", "beta"])
+
+    def test_unresolved_forced_tool_ids_are_logged_once(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.forced_tool_ids = "missing, available"
+
+        async def fake_unresolved(tool_ids, __request__=None):
+            return ["missing"]
+
+        filter_._get_unresolved_forced_tool_ids = fake_unresolved
+
+        logger = logging.getLogger("global_policy_filter")
+        with self.assertLogs(logger, level="WARNING") as logs:
+            run_inlet(
+                filter_, {"messages": [{"role": "user", "content": "Hello"}]}
+            )
+            run_inlet(
+                filter_, {"messages": [{"role": "user", "content": "Hello"}]}
+            )
+
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("missing", logs.output[0])
+
+    def test_unresolved_forced_mcp_server_ids_are_logged_once(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.forced_tool_ids = "server:mcp:missing, server:mcp:available"
+
+        request = types.SimpleNamespace(
+            app=types.SimpleNamespace(
+                state=types.SimpleNamespace(
+                    config=types.SimpleNamespace(
+                        TOOL_SERVER_CONNECTIONS=[
+                            {"type": "mcp", "info": {"id": "available"}}
+                        ]
+                    )
+                )
+            )
+        )
+
+        logger = logging.getLogger("global_policy_filter")
+        with self.assertLogs(logger, level="WARNING") as logs:
+            run_inlet(
+                filter_,
+                {"messages": [{"role": "user", "content": "Hello"}]},
+                __request__=request,
+            )
+            run_inlet(
+                filter_,
+                {"messages": [{"role": "user", "content": "Hello"}]},
+                __request__=request,
+            )
+
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("server:mcp:missing", logs.output[0])
+        self.assertNotIn("server:mcp:available", logs.output[0])
 
 
 if __name__ == "__main__":

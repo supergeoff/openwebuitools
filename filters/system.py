@@ -59,6 +59,12 @@ class Filter:
             default=300,
             description="Langfuse SDK cache TTL. Edits propagate after this delay.",
         )
+        forced_tool_ids: str = Field(
+            default="",
+            description=(
+                "Comma-separated workspace tool IDs to force-enable on every request."
+            ),
+        )
 
     class UserValves(BaseModel):
         hindsight_bankid: str = Field(
@@ -70,6 +76,7 @@ class Filter:
         self.valves = self.Valves()
         self.user_valves = self.UserValves()
         self._client = None
+        self._warned_unresolved_tool_ids = set()
 
     def _get_client(self):
         """Lazily build a Langfuse client. Returns None if keys are missing."""
@@ -147,7 +154,128 @@ class Filter:
         variables = self._prompt_variables(__user__)
         return self._fetch_policy(variables).strip()
 
-    def inlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
+    def _dedupe_tool_ids(self, tool_ids) -> list[str]:
+        result = []
+        seen = set()
+        for tool_id in tool_ids:
+            value = str(tool_id).strip() if tool_id is not None else ""
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def _parse_forced_tool_ids(self) -> list[str]:
+        raw = str(self.valves.forced_tool_ids or "")
+        return self._dedupe_tool_ids(raw.replace("\n", ",").split(","))
+
+    def _coerce_tool_ids(self, value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return self._dedupe_tool_ids([value])
+        if isinstance(value, (list, tuple, set)):
+            return self._dedupe_tool_ids(value)
+        return []
+
+    def _get_unresolved_mcp_tool_ids(
+        self, forced_tool_ids: list[str], __request__=None
+    ) -> list[str]:
+        mcp_tool_ids = [
+            tool_id
+            for tool_id in forced_tool_ids
+            if tool_id.startswith("server:mcp:")
+        ]
+        if not mcp_tool_ids or __request__ is None:
+            return []
+
+        try:
+            connections = __request__.app.state.config.TOOL_SERVER_CONNECTIONS
+        except AttributeError:
+            return []
+
+        configured_server_ids = {
+            str(connection.get("info", {}).get("id", "")).strip()
+            for connection in connections or []
+            if connection.get("type") == "mcp"
+        }
+
+        return [
+            tool_id
+            for tool_id in mcp_tool_ids
+            if tool_id[len("server:mcp:") :] not in configured_server_ids
+        ]
+
+    async def _get_unresolved_forced_tool_ids(
+        self, forced_tool_ids: list[str], __request__=None
+    ) -> list[str]:
+        local_tool_ids = [
+            tool_id
+            for tool_id in forced_tool_ids
+            if not tool_id.startswith("server:mcp:")
+        ]
+        unresolved_tool_ids = self._get_unresolved_mcp_tool_ids(
+            forced_tool_ids, __request__
+        )
+
+        if local_tool_ids:
+            try:
+                from open_webui.models.tools import Tools
+
+                tool_models = await Tools.get_tools_by_ids(local_tool_ids)
+            except ImportError:
+                tool_models = {}
+            except Exception as exc:
+                log.warning("Could not validate forced tool_ids: %s", exc)
+                tool_models = {}
+
+            resolved_tool_ids = (
+                set(tool_models.keys()) if isinstance(tool_models, dict) else set()
+            )
+            unresolved_tool_ids.extend(
+                [
+                    tool_id
+                    for tool_id in local_tool_ids
+                    if tool_id not in resolved_tool_ids
+                ]
+            )
+
+        return unresolved_tool_ids
+
+    def _log_unresolved_forced_tool_ids(self, unresolved_tool_ids: list[str]) -> None:
+        new_unresolved = [
+            tool_id
+            for tool_id in unresolved_tool_ids
+            if tool_id not in self._warned_unresolved_tool_ids
+        ]
+        if not new_unresolved:
+            return
+
+        self._warned_unresolved_tool_ids.update(new_unresolved)
+        log.warning(
+            "Forced tool_ids could not be resolved and may be ignored: %s",
+            ", ".join(new_unresolved),
+        )
+
+    async def _force_tool_ids(self, body: dict, __request__=None) -> None:
+        forced_tool_ids = self._parse_forced_tool_ids()
+        if not forced_tool_ids:
+            return
+
+        body["tool_ids"] = self._dedupe_tool_ids(
+            [*self._coerce_tool_ids(body.get("tool_ids")), *forced_tool_ids]
+        )
+
+        unresolved_tool_ids = await self._get_unresolved_forced_tool_ids(
+            forced_tool_ids, __request__
+        )
+        self._log_unresolved_forced_tool_ids(unresolved_tool_ids)
+
+    async def inlet(
+        self, body: dict, __request__=None, __user__: Optional[dict] = None
+    ) -> dict:
+        await self._force_tool_ids(body, __request__)
+
         if not self.valves.enabled:
             return body
 
