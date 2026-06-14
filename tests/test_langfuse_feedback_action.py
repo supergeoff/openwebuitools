@@ -67,6 +67,34 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
         sys.modules["langfuse"] = langfuse_module
         return original
 
+    def install_langfuse_create_score_stub(self, scores):
+        class Scores:
+            pass
+
+        class Api:
+            scores = Scores()
+
+        class Langfuse:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+                self.api = Api()
+
+            @staticmethod
+            def create_trace_id(*, seed=None):
+                return f"trace::{seed}"
+
+            def create_score(self, **kwargs):
+                scores.append(kwargs)
+
+            def flush(self):
+                scores.append({"flushed": True})
+
+        langfuse_module = types.ModuleType("langfuse")
+        langfuse_module.Langfuse = Langfuse
+        original = sys.modules.get("langfuse")
+        sys.modules["langfuse"] = langfuse_module
+        return original
+
     def restore_langfuse_stub(self, original):
         if original is None:
             sys.modules.pop("langfuse", None)
@@ -139,6 +167,37 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
 
         self.assertEqual(scores[0]["trace_id"], "trace::owui:chat-1:msg-from-action-payload")
         self.assertEqual(scores[0]["metadata"]["message_id"], "msg-from-action-payload")
+        self.assertEqual(events[-1]["data"]["type"], "success")
+
+    def test_langfuse_create_score_api_is_supported(self):
+        module = load_action_module()
+        scores = []
+        original = self.install_langfuse_create_score_stub(scores)
+        try:
+            action = module.Action()
+            action.valves.langfuse_public_key = "pk-test"
+            action.valves.langfuse_secret_key = "sk-test"
+
+            events = []
+
+            async def event_emitter(event):
+                events.append(event)
+
+            run_action(
+                action,
+                {"model": "gpt-test"},
+                __id__="positive",
+                __user__={"id": "user-1"},
+                __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
+                __event_emitter__=event_emitter,
+            )
+        finally:
+            self.restore_langfuse_stub(original)
+
+        self.assertEqual(scores[0]["trace_id"], "trace::owui:chat-1:msg-1")
+        self.assertEqual(scores[0]["name"], "owui_user_feedback")
+        self.assertEqual(scores[1]["name"], "owui_feedback_category")
+        self.assertEqual(scores[2], {"flushed": True})
         self.assertEqual(events[-1]["data"]["type"], "success")
 
     def test_action_buttons_have_readable_names_and_icons(self):

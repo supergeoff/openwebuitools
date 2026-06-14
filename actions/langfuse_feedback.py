@@ -142,6 +142,31 @@ class Action:
     def _model_id(self, body: dict) -> str:
         return str(body.get("model", "") or "")
 
+    def _create_score(self, client, **score) -> None:
+        create_score = getattr(client, "create_score", None)
+        if callable(create_score):
+            create_score(**score)
+            return
+
+        api = getattr(client, "api", None)
+        scores = getattr(api, "scores", None)
+        create = getattr(scores, "create", None)
+        if callable(create):
+            create(**score)
+            return
+
+        legacy = getattr(api, "legacy", None)
+        score_v1 = getattr(legacy, "score_v1", None)
+        legacy_create = getattr(score_v1, "create", None)
+        if callable(legacy_create):
+            legacy_score = dict(score)
+            if "score_id" in legacy_score:
+                legacy_score["id"] = legacy_score.pop("score_id")
+            legacy_create(**legacy_score)
+            return
+
+        raise AttributeError("Langfuse client has no supported score creation API.")
+
     async def action(
         self,
         body: dict,
@@ -193,7 +218,8 @@ class Action:
 
         try:
             client = self._get_client()
-            client.api.scores.create(
+            self._create_score(
+                client,
                 trace_id=trace_id,
                 name="owui_user_feedback",
                 value=feedback_value,
@@ -204,7 +230,8 @@ class Action:
                     trace_id, user_id, "owui_user_feedback", feedback_type
                 ),
             )
-            client.api.scores.create(
+            self._create_score(
+                client,
                 trace_id=trace_id,
                 name="owui_feedback_category",
                 value=feedback_type,
