@@ -65,6 +65,12 @@ class Filter:
                 "Comma-separated workspace tool IDs to force-enable on every request."
             ),
         )
+        forced_skill_ids: str = Field(
+            default="",
+            description=(
+                "Comma-separated workspace skill IDs to force-enable on every request."
+            ),
+        )
 
     class UserValves(BaseModel):
         hindsight_bankid: str = Field(
@@ -77,6 +83,7 @@ class Filter:
         self.user_valves = self.UserValves()
         self._client = None
         self._warned_unresolved_tool_ids = set()
+        self._warned_unresolved_skill_ids = set()
 
     def _get_client(self):
         """Lazily build a Langfuse client. Returns None if keys are missing."""
@@ -154,29 +161,42 @@ class Filter:
         variables = self._prompt_variables(__user__)
         return self._fetch_policy(variables).strip()
 
-    def _dedupe_tool_ids(self, tool_ids) -> list[str]:
+    def _dedupe_ids(self, ids) -> list[str]:
         result = []
         seen = set()
-        for tool_id in tool_ids:
-            value = str(tool_id).strip() if tool_id is not None else ""
+        for id_ in ids:
+            value = str(id_).strip() if id_ is not None else ""
             if not value or value in seen:
                 continue
             seen.add(value)
             result.append(value)
         return result
 
+    def _dedupe_tool_ids(self, tool_ids) -> list[str]:
+        return self._dedupe_ids(tool_ids)
+
     def _parse_forced_tool_ids(self) -> list[str]:
         raw = str(self.valves.forced_tool_ids or "")
-        return self._dedupe_tool_ids(raw.replace("\n", ",").split(","))
+        return self._dedupe_ids(raw.replace("\n", ",").split(","))
 
-    def _coerce_tool_ids(self, value) -> list[str]:
+    def _parse_forced_skill_ids(self) -> list[str]:
+        raw = str(self.valves.forced_skill_ids or "")
+        return self._dedupe_ids(raw.replace("\n", ",").split(","))
+
+    def _coerce_ids(self, value) -> list[str]:
         if value is None:
             return []
         if isinstance(value, str):
-            return self._dedupe_tool_ids([value])
+            return self._dedupe_ids([value])
         if isinstance(value, (list, tuple, set)):
-            return self._dedupe_tool_ids(value)
+            return self._dedupe_ids(value)
         return []
+
+    def _coerce_tool_ids(self, value) -> list[str]:
+        return self._coerce_ids(value)
+
+    def _coerce_skill_ids(self, value) -> list[str]:
+        return self._coerce_ids(value)
 
     def _get_unresolved_mcp_tool_ids(
         self, forced_tool_ids: list[str], __request__=None
@@ -257,12 +277,71 @@ class Filter:
             ", ".join(new_unresolved),
         )
 
+    def _get_user_id(self, __user__: Optional[dict]) -> str:
+        if not __user__:
+            return ""
+        if isinstance(__user__, dict):
+            return str(__user__.get("id", "") or "").strip()
+        return str(getattr(__user__, "id", "") or "").strip()
+
+    async def _get_unresolved_forced_skill_ids(
+        self, forced_skill_ids: list[str], __user__: Optional[dict] = None
+    ) -> list[str]:
+        if not forced_skill_ids:
+            return []
+
+        try:
+            from open_webui.models.skills import Skills
+
+            user_id = self._get_user_id(__user__)
+            accessible_skill_ids = set(forced_skill_ids)
+            if user_id:
+                accessible_skills = await Skills.get_skills_by_user_id(user_id, "read")
+                accessible_skill_ids = {
+                    str(skill.id).strip()
+                    for skill in accessible_skills or []
+                    if getattr(skill, "id", None)
+                }
+
+            unresolved_skill_ids = []
+            for skill_id in forced_skill_ids:
+                if skill_id not in accessible_skill_ids:
+                    unresolved_skill_ids.append(skill_id)
+                    continue
+
+                skill = await Skills.get_skill_by_id(skill_id)
+                if not skill or not getattr(skill, "is_active", False):
+                    unresolved_skill_ids.append(skill_id)
+
+            return unresolved_skill_ids
+        except ImportError:
+            return []
+        except Exception as exc:
+            log.warning("Could not validate forced skill_ids: %s", exc)
+            return []
+
+    def _log_unresolved_forced_skill_ids(self, unresolved_skill_ids: list[str]) -> None:
+        new_unresolved = [
+            skill_id
+            for skill_id in unresolved_skill_ids
+            if skill_id not in self._warned_unresolved_skill_ids
+        ]
+        if not new_unresolved:
+            return
+
+        self._warned_unresolved_skill_ids.update(new_unresolved)
+        log.warning(
+            "Forced skill_ids could not be resolved, are inactive, "
+            "or may be inaccessible and may be ignored: %s",
+            ", ".join(new_unresolved),
+        )
+
     async def _force_tool_ids(self, body: dict, __request__=None) -> None:
         forced_tool_ids = self._parse_forced_tool_ids()
         if not forced_tool_ids:
             return
 
-        body["tool_ids"] = self._dedupe_tool_ids(
+        body["tool_ids"] = self._dedupe_ids(
             [*self._coerce_tool_ids(body.get("tool_ids")), *forced_tool_ids]
         )
 
@@ -271,10 +350,27 @@ class Filter:
         )
         self._log_unresolved_forced_tool_ids(unresolved_tool_ids)
 
+    async def _force_skill_ids(
+        self, body: dict, __user__: Optional[dict] = None
+    ) -> None:
+        forced_skill_ids = self._parse_forced_skill_ids()
+        if not forced_skill_ids:
+            return
+
+        body["skill_ids"] = self._dedupe_ids(
+            [*self._coerce_skill_ids(body.get("skill_ids")), *forced_skill_ids]
+        )
+
+        unresolved_skill_ids = await self._get_unresolved_forced_skill_ids(
+            forced_skill_ids, __user__
+        )
+        self._log_unresolved_forced_skill_ids(unresolved_skill_ids)
+
     async def inlet(
         self, body: dict, __request__=None, __user__: Optional[dict] = None
     ) -> dict:
         await self._force_tool_ids(body, __request__)
+        await self._force_skill_ids(body, __user__)
 
         if not self.valves.enabled:
             return body

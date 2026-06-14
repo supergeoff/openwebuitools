@@ -248,6 +248,100 @@ class SystemFilterTest(unittest.TestCase):
         self.assertIn("server:mcp:missing", logs.output[0])
         self.assertNotIn("server:mcp:available", logs.output[0])
 
+    def test_forced_skill_ids_are_added_without_duplicates(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.forced_skill_ids = "skill-a, skill-b, skill-a"
+
+        body = {
+            "skill_ids": ["existing", "skill-a"],
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        async def no_unresolved(skill_ids, __user__=None):
+            return []
+
+        filter_._get_unresolved_forced_skill_ids = no_unresolved
+
+        result = run_inlet(filter_, body)
+
+        self.assertEqual(result["skill_ids"], ["existing", "skill-a", "skill-b"])
+
+    def test_unresolved_forced_skill_ids_are_logged_once(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.forced_skill_ids = "missing, available"
+
+        async def fake_unresolved(skill_ids, __user__=None):
+            return ["missing"]
+
+        filter_._get_unresolved_forced_skill_ids = fake_unresolved
+
+        logger = logging.getLogger("global_policy_filter")
+        with self.assertLogs(logger, level="WARNING") as logs:
+            run_inlet(
+                filter_, {"messages": [{"role": "user", "content": "Hello"}]}
+            )
+            run_inlet(
+                filter_, {"messages": [{"role": "user", "content": "Hello"}]}
+            )
+
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("missing", logs.output[0])
+
+    def test_inactive_forced_skill_ids_are_unresolved(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+
+        class Skill:
+            def __init__(self, id, is_active=True):
+                self.id = id
+                self.is_active = is_active
+
+        class Skills:
+            @staticmethod
+            async def get_skills_by_user_id(user_id, permission):
+                return [Skill("active"), Skill("inactive", is_active=False)]
+
+            @staticmethod
+            async def get_skill_by_id(skill_id):
+                return {
+                    "active": Skill("active"),
+                    "inactive": Skill("inactive", is_active=False),
+                }.get(skill_id)
+
+        open_webui = types.ModuleType("open_webui")
+        models = types.ModuleType("open_webui.models")
+        skills_module = types.ModuleType("open_webui.models.skills")
+        skills_module.Skills = Skills
+
+        original_modules = {
+            name: sys.modules.get(name)
+            for name in [
+                "open_webui",
+                "open_webui.models",
+                "open_webui.models.skills",
+            ]
+        }
+        sys.modules["open_webui"] = open_webui
+        sys.modules["open_webui.models"] = models
+        sys.modules["open_webui.models.skills"] = skills_module
+        try:
+            unresolved = asyncio.run(
+                filter_._get_unresolved_forced_skill_ids(
+                    ["active", "inactive", "missing"],
+                    __user__={"id": "user-1"},
+                )
+            )
+        finally:
+            for name, original in original_modules.items():
+                if original is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = original
+
+        self.assertEqual(unresolved, ["inactive", "missing"])
+
 
 if __name__ == "__main__":
     unittest.main()
