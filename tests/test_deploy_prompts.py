@@ -15,6 +15,7 @@ SCRIPT_PATH = ROOT / ".github" / "scripts" / "deploy-prompts.py"
 PROMPT_DIR = ROOT / "prompts"
 REQUIRED_PROMPTS = [
     "core",
+    "task_management",
     "memory",
     "tools",
     "research",
@@ -53,10 +54,15 @@ class DeployPromptsParsingTests(unittest.TestCase):
         module = load_deploy_prompts_module()
 
         memory = module.parse_prompt_file(PROMPT_DIR / "memory.md", label="production")
+        task_management = module.parse_prompt_file(
+            PROMPT_DIR / "task_management.md", label="production"
+        )
         research = module.parse_prompt_file(PROMPT_DIR / "research.md", label="production")
         coding = module.parse_prompt_file(PROMPT_DIR / "coding.md", label="production")
 
         self.assertIn("{{hindsight_bankid}}", memory.prompt)
+        self.assertIn("create_tasks", task_management.prompt)
+        self.assertIn("update_task", task_management.prompt)
         self.assertIn("SearXNG and crawl4ai", research.prompt)
         self.assertIn("Do not treat GitHub search alone as sufficient", research.prompt)
         self.assertIn("current coder workspace", coding.prompt)

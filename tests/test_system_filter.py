@@ -51,8 +51,8 @@ def run_outlet(filter_, body, **kwargs):
 class SystemFilterTest(unittest.TestCase):
     def test_memory_prompt_receives_hindsight_bankid_from_user_valve_only(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("memory",)
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "memory"
 
         calls = []
 
@@ -86,8 +86,8 @@ class SystemFilterTest(unittest.TestCase):
 
     def test_hindsight_bankid_supports_user_valves_object(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("memory",)
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "memory"
 
         class UserValves:
             hindsight_bankid = "alice-bank"
@@ -110,8 +110,8 @@ class SystemFilterTest(unittest.TestCase):
 
     def test_missing_user_bankid_compiles_empty_prompt_variable(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("memory",)
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "memory"
 
         calls = []
 
@@ -143,7 +143,6 @@ class SystemFilterTest(unittest.TestCase):
     def test_filter_has_only_user_bankid_for_hindsight(self):
         module = load_filter_module()
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core"
 
         self.assertFalse(hasattr(filter_, "_fetch_hindsight_memory"))
         self.assertFalse(hasattr(filter_, "_build_hindsight_mcp_instruction"))
@@ -152,6 +151,7 @@ class SystemFilterTest(unittest.TestCase):
         self.assertFalse(hasattr(filter_.valves, "hindsight_auth_header"))
         self.assertFalse(hasattr(filter_.valves, "hindsight_mcp_enabled"))
         self.assertFalse(hasattr(filter_.valves, "hindsight_injection_prefix"))
+        self.assertFalse(hasattr(filter_.valves, "prompt_names"))
         self.assertTrue(hasattr(filter_.user_valves, "hindsight_bankid"))
 
     def test_existing_system_prompt_is_preserved_after_injections(self):
@@ -360,19 +360,27 @@ class SystemFilterTest(unittest.TestCase):
 
         self.assertEqual(unresolved, ["inactive", "missing"])
 
-    def test_default_prompt_names_are_split_modules(self):
+    def test_builtin_prompt_modules_include_task_management(self):
         module = load_filter_module()
         filter_ = module.Filter()
 
         self.assertEqual(
-            filter_._parse_prompt_names(),
-            ["core", "memory", "tools", "research", "coding", "output_style"],
+            filter_._prompt_module_names(),
+            [
+                "core",
+                "task_management",
+                "memory",
+                "tools",
+                "research",
+                "coding",
+                "output_style",
+            ],
         )
 
     def test_split_prompts_are_fetched_in_order_and_only_memory_receives_bankid(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("core", "task_management", "memory", "tools")
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core, memory, tools"
         calls = []
 
         class Prompt:
@@ -398,20 +406,32 @@ class SystemFilterTest(unittest.TestCase):
             __user__={"valves": {"hindsight_bankid": "bank-1"}},
         )
 
-        self.assertEqual([name for name, _ in calls], ["core", "memory", "tools"])
+        self.assertEqual(
+            [name for name, _ in calls],
+            ["core", "task_management", "memory", "tools"],
+        )
         self.assertEqual(
             [kwargs["label"] for _, kwargs in calls],
-            ["production", "production", "production"],
+            ["production", "production", "production", "production"],
         )
         self.assertEqual(Prompt.compile_calls, [
             ("core", {}),
+            ("task_management", {}),
             ("memory", {"hindsight_bankid": "bank-1"}),
             ("tools", {}),
         ])
         content = result["messages"][0]["content"]
-        self.assertLess(content.index("# Prompt Module: core"), content.index("# Prompt Module: memory"))
+        self.assertLess(
+            content.index("# Prompt Module: core"),
+            content.index("# Prompt Module: task_management"),
+        )
+        self.assertLess(
+            content.index("# Prompt Module: task_management"),
+            content.index("# Prompt Module: memory"),
+        )
         self.assertLess(content.index("# Prompt Module: memory"), content.index("# Prompt Module: tools"))
         self.assertIn("core:NO_BANKID", content)
+        self.assertIn("task_management:NO_BANKID", content)
         self.assertIn("memory:bank-1", content)
         self.assertIn("tools:NO_BANKID", content)
 
@@ -424,8 +444,8 @@ class SystemFilterTest(unittest.TestCase):
 
     def test_langfuse_prompt_fetch_failure_hard_fails_with_module_name(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("core",)
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core"
 
         class Client:
             def get_prompt(self, name, **kwargs):
@@ -438,8 +458,8 @@ class SystemFilterTest(unittest.TestCase):
 
     def test_empty_compiled_prompt_hard_fails_with_module_name(self):
         module = load_filter_module()
+        module.PROMPT_MODULES = ("memory",)
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "memory"
 
         class Prompt:
             def compile(self, **kwargs):
@@ -481,7 +501,6 @@ class SystemFilterTest(unittest.TestCase):
     def test_outlet_records_langfuse_trace_with_prompt_metadata(self):
         module = load_filter_module()
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core,memory"
         filter_.valves.forced_tool_ids = "server:mcp:memory"
         filter_.valves.forced_skill_ids = "brainstorming"
         started = []
@@ -519,7 +538,7 @@ class SystemFilterTest(unittest.TestCase):
         self.assertEqual(trace["name"], "owui-chat-response")
         self.assertEqual(trace["input"], {"last_user_message": "Question"})
         self.assertEqual(trace["output"], {"assistant_message": "Answer"})
-        self.assertEqual(trace["metadata"]["prompt_modules"], "core,memory")
+        self.assertNotIn("prompt_modules", trace["metadata"])
         self.assertEqual(trace["metadata"]["forced_tool_ids"], "server:mcp:memory")
         self.assertEqual(trace["metadata"]["forced_skill_ids"], "brainstorming")
         self.assertEqual(trace["metadata"]["model"], "gpt-test")

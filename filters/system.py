@@ -17,8 +17,14 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("global_policy_filter")
 
-DEFAULT_PROMPT_NAMES = (
-    "core,memory,tools,research,coding,output_style"
+PROMPT_MODULES = (
+    "core",
+    "task_management",
+    "memory",
+    "tools",
+    "research",
+    "coding",
+    "output_style",
 )
 
 
@@ -43,12 +49,6 @@ class Filter:
             default="",
             description="Langfuse secret key (sk-lf-...).",
             json_schema_extra={"input": {"type": "password"}},
-        )
-        prompt_names: str = Field(
-            default=DEFAULT_PROMPT_NAMES,
-            description=(
-                "Comma-separated TEXT prompt modules in Langfuse, fetched in order."
-            ),
         )
         prompt_label: str = Field(
             default="production",
@@ -104,12 +104,13 @@ class Filter:
         except Exception as exc:
             raise RuntimeError(f"Langfuse client init failed: {exc}") from exc
 
-    def _parse_prompt_names(self) -> list[str]:
-        raw = str(self.valves.prompt_names or "")
-        prompt_names = self._dedupe_ids(raw.replace("\n", ",").split(","))
-        if not prompt_names:
-            raise RuntimeError("At least one Langfuse prompt module must be configured.")
-        return prompt_names
+    def _prompt_module_names(self) -> list[str]:
+        prompt_modules = self._dedupe_ids(PROMPT_MODULES)
+        if not prompt_modules:
+            raise RuntimeError(
+                "At least one built-in Langfuse prompt module is required."
+            )
+        return prompt_modules
 
     def _fetch_prompt_module(self, prompt_name: str, variables: dict) -> str:
         """Fetch and compile one Langfuse prompt module. Fail closed."""
@@ -142,7 +143,7 @@ class Filter:
 
     def _fetch_policy(self, __user__: Optional[dict]) -> str:
         sections = []
-        for prompt_name in self._parse_prompt_names():
+        for prompt_name in self._prompt_module_names():
             variables = self._prompt_variables(prompt_name, __user__)
             text = self._fetch_prompt_module(prompt_name, variables)
             sections.append(f"# Prompt Module: {prompt_name}\n\n{text}")
@@ -219,7 +220,6 @@ class Filter:
             ),
             "model": self._model_id(body, __model__),
             "prompt_label": str(self.valves.prompt_label),
-            "prompt_modules": ",".join(self._parse_prompt_names()),
             "forced_tool_ids": ",".join(self._parse_forced_tool_ids()),
             "forced_skill_ids": ",".join(self._parse_forced_skill_ids()),
         }

@@ -48,6 +48,8 @@ class OwuiJudgeEvalTest(unittest.TestCase):
                 {
                     "instruction_following": 0.8,
                     "tool_use": 0.7,
+                    "task_management": 0.9,
+                    "complex_run_orchestration": 0.5,
                     "memory_policy": 1,
                     "research_policy": 0.4,
                     "overall_quality": 0.6,
@@ -59,11 +61,16 @@ class OwuiJudgeEvalTest(unittest.TestCase):
         self.assertEqual([score.name for score in scores], [
             "judge_instruction_following",
             "judge_tool_use",
+            "judge_task_management",
+            "judge_complex_run_orchestration",
             "judge_memory_policy",
             "judge_research_policy",
             "judge_overall_quality",
         ])
-        self.assertEqual([score.value for score in scores], [0.8, 0.7, 1.0, 0.4, 0.6])
+        self.assertEqual(
+            [score.value for score in scores],
+            [0.8, 0.7, 0.9, 0.5, 1.0, 0.4, 0.6],
+        )
         self.assertTrue(all(score.data_type == "NUMERIC" for score in scores))
         self.assertTrue(all(score.comment == "Bonne reponse, recherche faible." for score in scores))
 
@@ -72,7 +79,7 @@ class OwuiJudgeEvalTest(unittest.TestCase):
         trace = types.SimpleNamespace(
             input={"last_user_message": "Question"},
             output={"assistant_message": "Answer"},
-            metadata={"prompt_modules": "core,memory"},
+            metadata={"prompt_label": "production"},
         )
 
         mapped = module.map_trace(item=trace)

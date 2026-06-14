@@ -12,6 +12,8 @@ from langfuse import Evaluation, EvaluatorInputs, Langfuse
 SCORE_FIELDS = [
     ("instruction_following", "judge_instruction_following"),
     ("tool_use", "judge_tool_use"),
+    ("task_management", "judge_task_management"),
+    ("complex_run_orchestration", "judge_complex_run_orchestration"),
     ("memory_policy", "judge_memory_policy"),
     ("research_policy", "judge_research_policy"),
     ("overall_quality", "judge_overall_quality"),
