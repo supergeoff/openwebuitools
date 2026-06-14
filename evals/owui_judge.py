@@ -126,7 +126,7 @@ def run_batch(langfuse: Langfuse, evaluator) -> Any:
         mapper=map_trace,
         evaluators={"owui_judge": evaluator},
         traces=True,
-        filter={"tags": ["owui", "global-prompt"]},
+        filter={"tags": ["owui", "system"]},
     )
 
 

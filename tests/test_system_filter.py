@@ -514,6 +514,9 @@ class SystemFilterTest(unittest.TestCase):
                 started.append(kwargs)
                 return Observation()
 
+            def _create_trace_tags_via_ingestion(self, **kwargs):
+                started.append({"trace_tags": kwargs})
+
             def flush(self):
                 started.append({"flushed": True})
 
@@ -543,7 +546,16 @@ class SystemFilterTest(unittest.TestCase):
         self.assertEqual(trace["metadata"]["forced_skill_ids"], "brainstorming")
         self.assertEqual(trace["metadata"]["model"], "gpt-test")
         self.assertTrue(started[0]["ended"])
-        self.assertEqual(started[1], {"flushed": True})
+        self.assertEqual(
+            started[1],
+            {
+                "trace_tags": {
+                    "trace_id": "trace:chat-1:msg-1",
+                    "tags": ["owui", "system"],
+                }
+            },
+        )
+        self.assertEqual(started[2], {"flushed": True})
 
 
 if __name__ == "__main__":

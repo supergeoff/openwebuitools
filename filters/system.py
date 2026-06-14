@@ -26,6 +26,7 @@ PROMPT_MODULES = (
     "coding",
     "output_style",
 )
+TRACE_TAGS = ("owui", "system")
 
 
 class Filter:
@@ -83,6 +84,7 @@ class Filter:
         self._client = None
         self._warned_unresolved_tool_ids = set()
         self._warned_unresolved_skill_ids = set()
+        self._warned_missing_trace_tag_support = False
 
     def _get_client(self):
         """Lazily build a Langfuse client. Raises clearly if unavailable."""
@@ -223,6 +225,22 @@ class Filter:
             "forced_tool_ids": ",".join(self._parse_forced_tool_ids()),
             "forced_skill_ids": ",".join(self._parse_forced_skill_ids()),
         }
+
+    def _trace_tags(self) -> list[str]:
+        return list(TRACE_TAGS)
+
+    def _tag_trace(self, client, trace_id: str) -> None:
+        tag_trace = getattr(client, "_create_trace_tags_via_ingestion", None)
+        if callable(tag_trace):
+            tag_trace(trace_id=trace_id, tags=self._trace_tags())
+            return
+
+        if not self._warned_missing_trace_tag_support:
+            self._warned_missing_trace_tag_support = True
+            log.warning(
+                "Langfuse client does not expose trace tag ingestion; "
+                "judge eval filtering by tags may skip system traces."
+            )
 
     def _dedupe_ids(self, ids) -> list[str]:
         result = []
@@ -479,9 +497,10 @@ class Filter:
         try:
             client = self._get_client()
             metadata = self._trace_metadata(body, __metadata__, __model__)
+            trace_id = self._build_trace_id(chat_id, message_id)
             observation = client.start_observation(
                 name="owui-chat-response",
-                trace_context={"trace_id": self._build_trace_id(chat_id, message_id)},
+                trace_context={"trace_id": trace_id},
                 input={"last_user_message": self._last_message_content(body, "user")},
                 output={
                     "assistant_message": self._last_message_content(
@@ -492,6 +511,7 @@ class Filter:
             )
             if hasattr(observation, "end"):
                 observation.end()
+            self._tag_trace(client, trace_id)
             if hasattr(client, "flush"):
                 client.flush()
         except Exception as exc:
