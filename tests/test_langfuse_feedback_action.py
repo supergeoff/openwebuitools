@@ -109,6 +109,46 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
         self.assertEqual(scores[2], {"flushed": True})
         self.assertEqual(events[-1]["data"]["type"], "success")
 
+    def test_openwebui_action_payload_id_is_used_as_message_id(self):
+        module = load_action_module()
+        scores = []
+        original = self.install_langfuse_stub(scores)
+        try:
+            action = module.Action()
+            action.valves.langfuse_public_key = "pk-test"
+            action.valves.langfuse_secret_key = "sk-test"
+
+            events = []
+
+            async def event_emitter(event):
+                events.append(event)
+
+            run_action(
+                action,
+                {
+                    "model": "gpt-test",
+                    "chat_id": "chat-1",
+                    "id": "msg-from-action-payload",
+                },
+                __id__="positive",
+                __user__={"id": "user-1"},
+                __event_emitter__=event_emitter,
+            )
+        finally:
+            self.restore_langfuse_stub(original)
+
+        self.assertEqual(scores[0]["trace_id"], "trace::owui:chat-1:msg-from-action-payload")
+        self.assertEqual(scores[0]["metadata"]["message_id"], "msg-from-action-payload")
+        self.assertEqual(events[-1]["data"]["type"], "success")
+
+    def test_action_buttons_have_readable_names_and_icons(self):
+        module = load_action_module()
+
+        for action in module.Action.actions:
+            self.assertNotIn("_", action["name"])
+            self.assertTrue(action["icon_url"].startswith("https://"))
+            self.assertTrue(action["icon_url"].endswith(".svg"))
+
     def test_prompt_issue_collects_comment_and_scores_negative_feedback(self):
         module = load_action_module()
         scores = []

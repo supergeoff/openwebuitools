@@ -16,13 +16,36 @@ from pydantic import BaseModel, Field
 log = logging.getLogger("langfuse_feedback_action")
 
 
+ICON_BASE_URL = "https://cdn.jsdelivr.net/npm/lucide-static@0.468.0/icons"
+
+
 class Action:
     actions = [
-        {"id": "positive", "name": "Positive"},
-        {"id": "negative", "name": "Negative"},
-        {"id": "prompt_issue", "name": "Prompt_Issue"},
-        {"id": "tool_issue", "name": "Tool_Issue"},
-        {"id": "memory_issue", "name": "Memory_Issue"},
+        {
+            "id": "positive",
+            "name": "Positive",
+            "icon_url": f"{ICON_BASE_URL}/thumbs-up.svg",
+        },
+        {
+            "id": "negative",
+            "name": "Negative",
+            "icon_url": f"{ICON_BASE_URL}/thumbs-down.svg",
+        },
+        {
+            "id": "prompt_issue",
+            "name": "Prompt issue",
+            "icon_url": f"{ICON_BASE_URL}/message-circle-warning.svg",
+        },
+        {
+            "id": "tool_issue",
+            "name": "Tool issue",
+            "icon_url": f"{ICON_BASE_URL}/wrench.svg",
+        },
+        {
+            "id": "memory_issue",
+            "name": "Memory issue",
+            "icon_url": f"{ICON_BASE_URL}/brain.svg",
+        },
     ]
 
     class Valves(BaseModel):
@@ -61,12 +84,17 @@ class Action:
         )
         return self._client
 
-    def _metadata_value(self, body: dict, __metadata__: Optional[dict], key: str):
+    def _metadata_value(
+        self, body: dict, __metadata__: Optional[dict], key: str, *body_aliases: str
+    ):
         if __metadata__ and __metadata__.get(key) is not None:
             return __metadata__.get(key)
         metadata = body.get("metadata") or {}
         if isinstance(metadata, dict) and metadata.get(key) is not None:
             return metadata.get(key)
+        for alias in body_aliases:
+            if body.get(alias) is not None:
+                return body.get(alias)
         return body.get(key)
 
     def _build_trace_id(self, chat_id: str, message_id: str) -> str:
@@ -141,7 +169,7 @@ class Action:
         ).strip()
         message_id = str(
             __message_id__
-            or self._metadata_value(body, __metadata__, "message_id")
+            or self._metadata_value(body, __metadata__, "message_id", "id")
             or ""
         ).strip()
         if not chat_id or not message_id:
