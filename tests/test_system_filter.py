@@ -41,10 +41,18 @@ def run_inlet(filter_, body, **kwargs):
     return result
 
 
+def run_outlet(filter_, body, **kwargs):
+    result = filter_.outlet(body, **kwargs)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
+
+
 class SystemFilterTest(unittest.TestCase):
     def test_langfuse_prompt_receives_hindsight_bankid_from_user_valve_only(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.prompt_names = "core"
 
         calls = []
 
@@ -79,6 +87,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_hindsight_bankid_supports_user_valves_object(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.prompt_names = "memory"
 
         class UserValves:
             hindsight_bankid = "alice-bank"
@@ -96,11 +105,13 @@ class SystemFilterTest(unittest.TestCase):
         body = {"messages": [{"role": "user", "content": "Hello"}]}
         result = run_inlet(filter_, body, __user__={"valves": UserValves()})
 
-        self.assertEqual(result["messages"][0]["content"], "bankid=alice-bank")
+        self.assertIn("bankid=alice-bank", result["messages"][0]["content"])
+        self.assertIn("# Prompt Module: memory", result["messages"][0]["content"])
 
     def test_missing_user_bankid_compiles_empty_prompt_variable(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.prompt_names = "core"
 
         calls = []
 
@@ -132,6 +143,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_filter_has_only_user_bankid_for_hindsight(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.prompt_names = "core"
 
         self.assertFalse(hasattr(filter_, "_fetch_hindsight_memory"))
         self.assertFalse(hasattr(filter_, "_build_hindsight_mcp_instruction"))
@@ -170,12 +182,14 @@ class SystemFilterTest(unittest.TestCase):
 
         self.assertEqual(result["messages"][0]["role"], "system")
         content = result["messages"][0]["content"]
-        self.assertTrue(content.startswith("GLOBAL POLICY Alice"))
+        self.assertTrue(content.startswith("# Prompt Module: core"))
+        self.assertIn("GLOBAL POLICY Alice", content)
         self.assertTrue(content.endswith("Existing model policy."))
 
     def test_forced_tool_ids_are_added_without_duplicates(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_tool_ids = "alpha, beta, alpha"
 
         body = {
@@ -195,6 +209,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_unresolved_forced_tool_ids_are_logged_once(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_tool_ids = "missing, available"
 
         async def fake_unresolved(tool_ids, __request__=None):
@@ -217,6 +232,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_unresolved_forced_mcp_server_ids_are_logged_once(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_tool_ids = "server:mcp:missing, server:mcp:available"
 
         request = types.SimpleNamespace(
@@ -251,6 +267,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_forced_skill_ids_are_added_without_duplicates(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_skill_ids = "skill-a, skill-b, skill-a"
 
         body = {
@@ -270,6 +287,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_unresolved_forced_skill_ids_are_logged_once(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_skill_ids = "missing, available"
 
         async def fake_unresolved(skill_ids, __user__=None):
@@ -341,6 +359,164 @@ class SystemFilterTest(unittest.TestCase):
                     sys.modules[name] = original
 
         self.assertEqual(unresolved, ["inactive", "missing"])
+
+    def test_default_prompt_names_are_split_modules(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+
+        self.assertEqual(
+            filter_._parse_prompt_names(),
+            ["core", "memory", "tools", "research", "coding", "output_style"],
+        )
+
+    def test_split_prompts_are_fetched_compiled_and_injected_in_order(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.prompt_names = "core, memory, tools"
+        calls = []
+
+        class Prompt:
+            def __init__(self, name):
+                self.name = name
+
+            def compile(self, **kwargs):
+                return f"{self.name}:{kwargs['hindsight_bankid']}"
+
+        class Client:
+            def get_prompt(self, name, **kwargs):
+                calls.append((name, kwargs))
+                return Prompt(name)
+
+        filter_._client = Client()
+
+        result = run_inlet(
+            filter_,
+            {"messages": [{"role": "user", "content": "Hello"}]},
+            __user__={"valves": {"hindsight_bankid": "bank-1"}},
+        )
+
+        self.assertEqual([name for name, _ in calls], ["core", "memory", "tools"])
+        self.assertEqual(
+            [kwargs["label"] for _, kwargs in calls],
+            ["production", "production", "production"],
+        )
+        content = result["messages"][0]["content"]
+        self.assertLess(content.index("# Prompt Module: core"), content.index("# Prompt Module: memory"))
+        self.assertLess(content.index("# Prompt Module: memory"), content.index("# Prompt Module: tools"))
+        self.assertIn("core:bank-1", content)
+        self.assertIn("memory:bank-1", content)
+        self.assertIn("tools:bank-1", content)
+
+    def test_missing_langfuse_keys_hard_fail_when_prompt_enabled(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+
+        with self.assertRaisesRegex(RuntimeError, "Langfuse public and secret keys"):
+            run_inlet(filter_, {"messages": [{"role": "user", "content": "Hello"}]})
+
+    def test_langfuse_prompt_fetch_failure_hard_fails_with_module_name(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.prompt_names = "core"
+
+        class Client:
+            def get_prompt(self, name, **kwargs):
+                raise ValueError("not found")
+
+        filter_._client = Client()
+
+        with self.assertRaisesRegex(RuntimeError, "core.*production.*not found"):
+            run_inlet(filter_, {"messages": [{"role": "user", "content": "Hello"}]})
+
+    def test_empty_compiled_prompt_hard_fails_with_module_name(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.prompt_names = "memory"
+
+        class Prompt:
+            def compile(self, **kwargs):
+                return "   "
+
+        class Client:
+            def get_prompt(self, name, **kwargs):
+                return Prompt()
+
+        filter_._client = Client()
+
+        with self.assertRaisesRegex(RuntimeError, "memory.*empty"):
+            run_inlet(filter_, {"messages": [{"role": "user", "content": "Hello"}]})
+
+    def test_trace_id_is_deterministic_for_chat_and_message(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+
+        class Langfuse:
+            @staticmethod
+            def create_trace_id(*, seed=None):
+                return f"trace::{seed}"
+
+        langfuse_module = types.ModuleType("langfuse")
+        langfuse_module.Langfuse = Langfuse
+        original = sys.modules.get("langfuse")
+        sys.modules["langfuse"] = langfuse_module
+        try:
+            self.assertEqual(
+                filter_._build_trace_id("chat-1", "message-2"),
+                "trace::owui:chat-1:message-2",
+            )
+        finally:
+            if original is None:
+                sys.modules.pop("langfuse", None)
+            else:
+                sys.modules["langfuse"] = original
+
+    def test_outlet_records_langfuse_trace_with_prompt_metadata(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.prompt_names = "core,memory"
+        filter_.valves.forced_tool_ids = "server:mcp:memory"
+        filter_.valves.forced_skill_ids = "brainstorming"
+        started = []
+
+        class Observation:
+            def end(self):
+                started[-1]["ended"] = True
+
+        class Client:
+            def start_observation(self, **kwargs):
+                started.append(kwargs)
+                return Observation()
+
+            def flush(self):
+                started.append({"flushed": True})
+
+        filter_._client = Client()
+        filter_._build_trace_id = lambda chat_id, message_id: f"trace:{chat_id}:{message_id}"
+
+        run_outlet(
+            filter_,
+            {
+                "model": "gpt-test",
+                "messages": [
+                    {"role": "user", "content": "Question"},
+                    {"role": "assistant", "content": "Answer"},
+                ],
+            },
+            __user__={"id": "user-1"},
+            __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
+        )
+
+        trace = started[0]
+        self.assertEqual(trace["trace_context"], {"trace_id": "trace:chat-1:msg-1"})
+        self.assertEqual(trace["name"], "owui-chat-response")
+        self.assertEqual(trace["input"], {"last_user_message": "Question"})
+        self.assertEqual(trace["output"], {"assistant_message": "Answer"})
+        self.assertEqual(trace["metadata"]["prompt_modules"], "core,memory")
+        self.assertEqual(trace["metadata"]["forced_tool_ids"], "server:mcp:memory")
+        self.assertEqual(trace["metadata"]["forced_skill_ids"], "brainstorming")
+        self.assertEqual(trace["metadata"]["model"], "gpt-test")
+        self.assertTrue(started[0]["ended"])
+        self.assertEqual(started[1], {"flushed": True})
 
 
 if __name__ == "__main__":

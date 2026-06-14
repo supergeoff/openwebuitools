@@ -1,0 +1,29 @@
+name: Run Langfuse Judge
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-langfuse-judge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install langfuse openai
+
+      - name: Run Langfuse judge evaluator
+        env:
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PROMPT_LABEL: ${{ secrets.LANGFUSE_PROMPT_LABEL }}
+          JUDGE_OPENAI_BASE_URL: ${{ secrets.JUDGE_OPENAI_BASE_URL }}
+          JUDGE_OPENAI_API_KEY: ${{ secrets.JUDGE_OPENAI_API_KEY }}
+          JUDGE_MODEL: ${{ secrets.JUDGE_MODEL }}
+        run: python evals/owui_judge.py

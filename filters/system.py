@@ -4,11 +4,10 @@ author: geoff
 requirements: langfuse
 description: >
   Single source of truth for the system prompt across ALL models.
-  The prompt itself lives in Langfuse (project "owui", text prompt "global",
-  label "production"). This filter fetches it (cached) and injects it as the
-  system message on every request.
+  The prompt itself lives in Langfuse (project "owui") as multiple text prompt
+  modules, fetched in order and injected as the system message on every request.
   The only per-user runtime value managed here is hindsight_bankid, exposed to
-  the Langfuse prompt as {{hindsight_bankid}}.
+  each Langfuse prompt as {{hindsight_bankid}}.
 """
 
 import logging
@@ -18,10 +17,8 @@ from pydantic import BaseModel, Field
 
 log = logging.getLogger("global_policy_filter")
 
-# Used only if Langfuse cannot be reached. Keep it roughly in sync with the
-# Langfuse "production" version so a fetch failure degrades gracefully.
-FALLBACK_POLICY = (
-    """You are an autonomous operator for the user. Act, do not propose."""
+DEFAULT_PROMPT_NAMES = (
+    "core,memory,tools,research,coding,output_style"
 )
 
 
@@ -47,9 +44,11 @@ class Filter:
             description="Langfuse secret key (sk-lf-...).",
             json_schema_extra={"input": {"type": "password"}},
         )
-        prompt_name: str = Field(
-            default="global",
-            description="Name of the TEXT prompt in Langfuse (project owui).",
+        prompt_names: str = Field(
+            default=DEFAULT_PROMPT_NAMES,
+            description=(
+                "Comma-separated TEXT prompt modules in Langfuse, fetched in order."
+            ),
         )
         prompt_label: str = Field(
             default="production",
@@ -86,11 +85,13 @@ class Filter:
         self._warned_unresolved_skill_ids = set()
 
     def _get_client(self):
-        """Lazily build a Langfuse client. Returns None if keys are missing."""
+        """Lazily build a Langfuse client. Raises clearly if unavailable."""
         if self._client is not None:
             return self._client
         if not (self.valves.langfuse_public_key and self.valves.langfuse_secret_key):
-            return None
+            raise RuntimeError(
+                "Langfuse public and secret keys are required for system prompt injection."
+            )
         try:
             from langfuse import Langfuse
 
@@ -101,35 +102,50 @@ class Filter:
             )
             return self._client
         except Exception as exc:
-            log.warning("Langfuse client init failed: %s", exc)
-            return None
+            raise RuntimeError(f"Langfuse client init failed: {exc}") from exc
 
-    def _compile_fallback(self, variables: dict) -> str:
-        bankid = variables.get("hindsight_bankid", "")
-        if not bankid:
-            return FALLBACK_POLICY
-        return f"{FALLBACK_POLICY}\n\nhindsight_bankid: {bankid}"
+    def _parse_prompt_names(self) -> list[str]:
+        raw = str(self.valves.prompt_names or "")
+        prompt_names = self._dedupe_ids(raw.replace("\n", ",").split(","))
+        if not prompt_names:
+            raise RuntimeError("At least one Langfuse prompt module must be configured.")
+        return prompt_names
 
-    def _fetch_policy(self, variables: dict) -> str:
-        """Fetch the prompt text from Langfuse (cached by the SDK). Fail open."""
+    def _fetch_prompt_module(self, prompt_name: str, variables: dict) -> str:
+        """Fetch and compile one Langfuse prompt module. Fail closed."""
         client = self._get_client()
-        if client is None:
-            return self._compile_fallback(variables)
         try:
             prompt = client.get_prompt(
-                self.valves.prompt_name,
+                prompt_name,
                 label=self.valves.prompt_label,
                 cache_ttl_seconds=self.valves.cache_ttl_seconds,
             )
-            text = prompt.compile(**variables)
-            return (
-                text
-                if isinstance(text, str) and text.strip()
-                else self._compile_fallback(variables)
-            )
         except Exception as exc:
-            log.warning("Langfuse get_prompt failed (%s), using fallback.", exc)
-            return self._compile_fallback(variables)
+            raise RuntimeError(
+                f"Langfuse prompt '{prompt_name}' label "
+                f"'{self.valves.prompt_label}' fetch failed: {exc}"
+            ) from exc
+
+        try:
+            text = prompt.compile(**variables)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Langfuse prompt '{prompt_name}' label "
+                f"'{self.valves.prompt_label}' compile failed: {exc}"
+            ) from exc
+
+        if not isinstance(text, str) or not text.strip():
+            raise RuntimeError(
+                f"Langfuse prompt '{prompt_name}' compiled to empty text."
+            )
+        return text.strip()
+
+    def _fetch_policy(self, variables: dict) -> str:
+        sections = []
+        for prompt_name in self._parse_prompt_names():
+            text = self._fetch_prompt_module(prompt_name, variables)
+            sections.append(f"# Prompt Module: {prompt_name}\n\n{text}")
+        return "\n\n".join(sections)
 
     def _get_user_valve(self, __user__: Optional[dict], key: str) -> Optional[str]:
         """Read OpenWebUI UserValves from dict or Pydantic-style objects."""
@@ -160,6 +176,51 @@ class Filter:
     ) -> str:
         variables = self._prompt_variables(__user__)
         return self._fetch_policy(variables).strip()
+
+    def _build_trace_id(self, chat_id: str, message_id: str) -> str:
+        from langfuse import Langfuse
+
+        return Langfuse.create_trace_id(seed=f"owui:{chat_id}:{message_id}")
+
+    def _metadata_value(self, body: dict, __metadata__: Optional[dict], key: str):
+        if __metadata__ and __metadata__.get(key) is not None:
+            return __metadata__.get(key)
+        metadata = body.get("metadata") or {}
+        if isinstance(metadata, dict) and metadata.get(key) is not None:
+            return metadata.get(key)
+        return body.get(key)
+
+    def _last_message_content(self, body: dict, role: str) -> str:
+        for message in reversed(body.get("messages", []) or []):
+            if message.get("role") == role:
+                content = message.get("content", "")
+                return content if isinstance(content, str) else str(content)
+        return ""
+
+    def _model_id(self, body: dict, __model__=None) -> str:
+        if body.get("model"):
+            return str(body.get("model"))
+        if isinstance(__model__, dict):
+            return str(__model__.get("id", "") or "")
+        return str(getattr(__model__, "id", "") or "") if __model__ else ""
+
+    def _trace_metadata(
+        self,
+        body: dict,
+        __metadata__: Optional[dict],
+        __model__=None,
+    ) -> dict:
+        return {
+            "chat_id": str(self._metadata_value(body, __metadata__, "chat_id") or ""),
+            "message_id": str(
+                self._metadata_value(body, __metadata__, "message_id") or ""
+            ),
+            "model": self._model_id(body, __model__),
+            "prompt_label": str(self.valves.prompt_label),
+            "prompt_modules": ",".join(self._parse_prompt_names()),
+            "forced_tool_ids": ",".join(self._parse_forced_tool_ids()),
+            "forced_skill_ids": ",".join(self._parse_forced_skill_ids()),
+        }
 
     def _dedupe_ids(self, ids) -> list[str]:
         result = []
@@ -389,3 +450,49 @@ class Filter:
             messages.insert(0, {"role": "system", "content": injected_prompt})
         body["messages"] = messages
         return body
+
+    async def outlet(
+        self,
+        body: dict,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __chat_id__=None,
+        __message_id__=None,
+        __model__=None,
+    ) -> None:
+        chat_id = str(
+            __chat_id__ or self._metadata_value(body, __metadata__, "chat_id") or ""
+        ).strip()
+        message_id = str(
+            __message_id__
+            or self._metadata_value(body, __metadata__, "message_id")
+            or ""
+        ).strip()
+        if not chat_id or not message_id:
+            log.warning(
+                "Skipping Langfuse trace recording: missing chat_id or message_id."
+            )
+            return None
+
+        try:
+            client = self._get_client()
+            metadata = self._trace_metadata(body, __metadata__, __model__)
+            observation = client.start_observation(
+                name="owui-chat-response",
+                trace_context={"trace_id": self._build_trace_id(chat_id, message_id)},
+                input={"last_user_message": self._last_message_content(body, "user")},
+                output={
+                    "assistant_message": self._last_message_content(
+                        body, "assistant"
+                    )
+                },
+                metadata=metadata,
+            )
+            if hasattr(observation, "end"):
+                observation.end()
+            if hasattr(client, "flush"):
+                client.flush()
+        except Exception as exc:
+            log.warning("Langfuse trace recording failed: %s", exc)
+
+        return None

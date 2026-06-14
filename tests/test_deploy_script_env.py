@@ -12,6 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPTS = sorted((ROOT / ".github" / "scripts").glob("deploy-*.py"))
 OPENWEBUI_SCRIPTS = [
+    ROOT / ".github" / "scripts" / "deploy-actions.py",
     ROOT / ".github" / "scripts" / "deploy-filters.py",
     ROOT / ".github" / "scripts" / "deploy-tools.py",
     ROOT / ".github" / "scripts" / "deploy-pipes.py",
@@ -80,3 +81,11 @@ class DeployScriptEnvTests(unittest.TestCase):
 
         self.assertIn("'.github/scripts/deploy-tools.py'", source)
         self.assertIn("'.github/workflows/deploy-tools.yml'", source)
+
+    def test_deploy_actions_workflow_runs_when_deploy_script_changes(self):
+        workflow = ROOT / ".github" / "workflows" / "deploy-actions.yml"
+        source = workflow.read_text(encoding="utf-8")
+
+        self.assertIn("'actions/**'", source)
+        self.assertIn("'.github/scripts/deploy-actions.py'", source)
+        self.assertIn("'.github/workflows/deploy-actions.yml'", source)

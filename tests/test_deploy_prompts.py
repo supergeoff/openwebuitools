@@ -12,7 +12,16 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / ".github" / "scripts" / "deploy-prompts.py"
-PROMPT_PATH = ROOT / "prompts" / "global.md"
+PROMPT_DIR = ROOT / "prompts"
+REQUIRED_PROMPTS = [
+    "core",
+    "memory",
+    "tools",
+    "research",
+    "coding",
+    "output_style",
+    "evaluator_owui_judge",
+]
 
 
 def load_deploy_prompts_module():
@@ -23,20 +32,35 @@ def load_deploy_prompts_module():
 
 
 class DeployPromptsParsingTests(unittest.TestCase):
-    def test_global_prompt_declares_langfuse_target_used_by_system_filter(self):
+    def test_required_split_prompt_modules_exist_without_global_legacy_prompt(self):
         module = load_deploy_prompts_module()
 
-        definition = module.parse_prompt_file(PROMPT_PATH, label="production")
+        self.assertFalse((PROMPT_DIR / "global.md").exists())
 
-        self.assertEqual(definition.name, "global")
-        self.assertEqual(definition.label, "production")
-        self.assertEqual(definition.type, "text")
-        self.assertIn("{{hindsight_bankid}}", definition.prompt)
-        self.assertIn("SearXNG and crawl4ai", definition.prompt)
-        self.assertIn("Do not treat GitHub search alone as sufficient", definition.prompt)
-        self.assertIn("current coder workspace", definition.prompt)
-        self.assertIn("Google Drive, Docs, Sheets, or other external storage only", definition.prompt)
-        self.assertNotIn("---", definition.prompt)
+        definitions = [
+            module.parse_prompt_file(PROMPT_DIR / f"{name}.md", label="production")
+            for name in REQUIRED_PROMPTS
+        ]
+
+        self.assertEqual([definition.name for definition in definitions], REQUIRED_PROMPTS)
+        for definition in definitions:
+            self.assertEqual(definition.label, "production")
+            self.assertEqual(definition.type, "text")
+            self.assertGreater(len(definition.prompt), 40)
+            self.assertNotIn("---", definition.prompt)
+
+    def test_split_prompt_content_keeps_known_policy_anchors(self):
+        module = load_deploy_prompts_module()
+
+        memory = module.parse_prompt_file(PROMPT_DIR / "memory.md", label="production")
+        research = module.parse_prompt_file(PROMPT_DIR / "research.md", label="production")
+        coding = module.parse_prompt_file(PROMPT_DIR / "coding.md", label="production")
+
+        self.assertIn("{{hindsight_bankid}}", memory.prompt)
+        self.assertIn("SearXNG and crawl4ai", research.prompt)
+        self.assertIn("Do not treat GitHub search alone as sufficient", research.prompt)
+        self.assertIn("current coder workspace", coding.prompt)
+        self.assertIn("Google Drive, Docs, Sheets, or other external storage only", coding.prompt)
 
     def test_prompt_name_comes_from_filename_and_label_from_config(self):
         module = load_deploy_prompts_module()
@@ -62,8 +86,8 @@ class DeployPromptsParsingTests(unittest.TestCase):
                 return types.SimpleNamespace(version=7, labels=["production", "latest"])
 
         definition = module.PromptDefinition(
-            path=Path("prompts/global.md"),
-            name="global",
+            path=Path("prompts/core.md"),
+            name="core",
             label="production",
             type="text",
             prompt="Hello {{hindsight_bankid}}",
@@ -76,7 +100,7 @@ class DeployPromptsParsingTests(unittest.TestCase):
             calls,
             [
                 {
-                    "name": "global",
+                    "name": "core",
                     "prompt": "Hello {{hindsight_bankid}}",
                     "labels": ["production"],
                     "type": "text",
