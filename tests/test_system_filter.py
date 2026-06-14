@@ -49,10 +49,10 @@ def run_outlet(filter_, body, **kwargs):
 
 
 class SystemFilterTest(unittest.TestCase):
-    def test_langfuse_prompt_receives_hindsight_bankid_from_user_valve_only(self):
+    def test_memory_prompt_receives_hindsight_bankid_from_user_valve_only(self):
         module = load_filter_module()
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core"
+        filter_.valves.prompt_names = "memory"
 
         calls = []
 
@@ -111,7 +111,7 @@ class SystemFilterTest(unittest.TestCase):
     def test_missing_user_bankid_compiles_empty_prompt_variable(self):
         module = load_filter_module()
         filter_ = module.Filter()
-        filter_.valves.prompt_names = "core"
+        filter_.valves.prompt_names = "memory"
 
         calls = []
 
@@ -167,7 +167,7 @@ class SystemFilterTest(unittest.TestCase):
 
         class Prompt:
             def compile(self, **kwargs):
-                return f"GLOBAL POLICY {kwargs['hindsight_bankid']}"
+                return "GLOBAL POLICY"
 
         class Client:
             def get_prompt(self, *args, **kwargs):
@@ -183,7 +183,7 @@ class SystemFilterTest(unittest.TestCase):
         self.assertEqual(result["messages"][0]["role"], "system")
         content = result["messages"][0]["content"]
         self.assertTrue(content.startswith("# Prompt Module: core"))
-        self.assertIn("GLOBAL POLICY Alice", content)
+        self.assertIn("GLOBAL POLICY", content)
         self.assertTrue(content.endswith("Existing model policy."))
 
     def test_forced_tool_ids_are_added_without_duplicates(self):
@@ -369,18 +369,21 @@ class SystemFilterTest(unittest.TestCase):
             ["core", "memory", "tools", "research", "coding", "output_style"],
         )
 
-    def test_split_prompts_are_fetched_compiled_and_injected_in_order(self):
+    def test_split_prompts_are_fetched_in_order_and_only_memory_receives_bankid(self):
         module = load_filter_module()
         filter_ = module.Filter()
         filter_.valves.prompt_names = "core, memory, tools"
         calls = []
 
         class Prompt:
+            compile_calls = []
+
             def __init__(self, name):
                 self.name = name
 
             def compile(self, **kwargs):
-                return f"{self.name}:{kwargs['hindsight_bankid']}"
+                self.compile_calls.append((self.name, kwargs))
+                return f"{self.name}:{kwargs.get('hindsight_bankid', 'NO_BANKID')}"
 
         class Client:
             def get_prompt(self, name, **kwargs):
@@ -400,12 +403,17 @@ class SystemFilterTest(unittest.TestCase):
             [kwargs["label"] for _, kwargs in calls],
             ["production", "production", "production"],
         )
+        self.assertEqual(Prompt.compile_calls, [
+            ("core", {}),
+            ("memory", {"hindsight_bankid": "bank-1"}),
+            ("tools", {}),
+        ])
         content = result["messages"][0]["content"]
         self.assertLess(content.index("# Prompt Module: core"), content.index("# Prompt Module: memory"))
         self.assertLess(content.index("# Prompt Module: memory"), content.index("# Prompt Module: tools"))
-        self.assertIn("core:bank-1", content)
+        self.assertIn("core:NO_BANKID", content)
         self.assertIn("memory:bank-1", content)
-        self.assertIn("tools:bank-1", content)
+        self.assertIn("tools:NO_BANKID", content)
 
     def test_missing_langfuse_keys_hard_fail_when_prompt_enabled(self):
         module = load_filter_module()

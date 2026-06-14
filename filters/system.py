@@ -7,7 +7,7 @@ description: >
   The prompt itself lives in Langfuse (project "owui") as multiple text prompt
   modules, fetched in order and injected as the system message on every request.
   The only per-user runtime value managed here is hindsight_bankid, exposed to
-  each Langfuse prompt as {{hindsight_bankid}}.
+  the memory prompt as {{hindsight_bankid}}.
 """
 
 import logging
@@ -140,9 +140,10 @@ class Filter:
             )
         return text.strip()
 
-    def _fetch_policy(self, variables: dict) -> str:
+    def _fetch_policy(self, __user__: Optional[dict]) -> str:
         sections = []
         for prompt_name in self._parse_prompt_names():
+            variables = self._prompt_variables(prompt_name, __user__)
             text = self._fetch_prompt_module(prompt_name, variables)
             sections.append(f"# Prompt Module: {prompt_name}\n\n{text}")
         return "\n\n".join(sections)
@@ -167,15 +168,16 @@ class Filter:
             value = self.user_valves.hindsight_bankid
         return str(value).strip() if value else ""
 
-    def _prompt_variables(self, __user__: Optional[dict]) -> dict:
+    def _prompt_variables(self, prompt_name: str, __user__: Optional[dict]) -> dict:
+        if prompt_name != "memory":
+            return {}
         return {"hindsight_bankid": self._resolve_bankid(__user__)}
 
     def _build_injected_prompt(
         self,
         __user__: Optional[dict],
     ) -> str:
-        variables = self._prompt_variables(__user__)
-        return self._fetch_policy(variables).strip()
+        return self._fetch_policy(__user__).strip()
 
     def _build_trace_id(self, chat_id: str, message_id: str) -> str:
         from langfuse import Langfuse
