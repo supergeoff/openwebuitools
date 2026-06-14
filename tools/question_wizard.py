@@ -52,7 +52,6 @@ import asyncio
 import hashlib
 import json
 import re
-import secrets
 import time
 from typing import Any
 
@@ -1817,7 +1816,11 @@ class Tools:
             form_fingerprint_json.encode("utf-8")
         ).hexdigest()[:24]
 
-        config["render_group_id"] = "qw_render_" + secrets.token_hex(12)
+        config["render_group_id"] = config["form_id"].replace(
+            "qw_form_",
+            "qw_render_",
+            1,
+        )
 
         config_json = json.dumps(config, ensure_ascii=False, separators=(",", ":"))
         config_json = config_json.replace("<", "\\u003c")

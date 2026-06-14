@@ -1,5 +1,6 @@
 import importlib
 import json
+import re
 import sys
 import types
 import unittest
@@ -21,6 +22,18 @@ except ModuleNotFoundError:
 
 
 question_wizard = importlib.import_module("tools.question_wizard")
+
+
+def _extract_wizard_config(response):
+    html = response.body.decode("utf-8")
+    match = re.search(
+        r'<script id="wizard-config" type="application/json">(.+?)</script>',
+        html,
+        re.DOTALL,
+    )
+    if not match:
+        raise AssertionError("Wizard config script tag not found.")
+    return json.loads(match.group(1))
 
 
 class QuestionWizardValidationTests(unittest.TestCase):
@@ -128,6 +141,31 @@ class QuestionWizardResponseTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("question_wizard_duplicate_guard_v1", first.body.decode("utf-8"))
         self.assertNotIn("question_wizard_duplicate_guard_v1", second.body.decode("utf-8"))
         self.assertRegex(second.body.decode("utf-8"), r"height:\s*1px")
+
+    async def test_run_wizard_uses_stable_render_group_for_same_questionnaire(self):
+        payload = json.dumps(
+            {
+                "title": "Feedback",
+                "questions": [
+                    {
+                        "question": "Choose one",
+                        "type": "single",
+                        "proposals": ["A", "B"],
+                    }
+                ],
+            }
+        )
+
+        first = await self.tool._run_wizard(payload)
+        second = await self.tool._run_wizard(payload)
+
+        first_config = _extract_wizard_config(first)
+        second_config = _extract_wizard_config(second)
+
+        self.assertEqual(
+            first_config["render_group_id"],
+            second_config["render_group_id"],
+        )
 
 
 if __name__ == "__main__":
