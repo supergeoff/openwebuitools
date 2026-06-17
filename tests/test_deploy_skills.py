@@ -93,6 +93,19 @@ class DeploySkillsTest(unittest.TestCase):
         self.assertEqual(brainstorming.id, "brainstorming")
         self.assertEqual(brainstorming.name, "Brainstorming")
 
+    def test_web_search_local_skill_is_discovered_for_deployment(self):
+        module = load_deploy_skills_module()
+
+        bundles = module.discover_local_skills(str(ROOT / "skills"))
+        payloads = [module.build_payload(bundle) for bundle in bundles]
+        payloads = [payload for payload in payloads if payload is not None]
+        web_search = next(payload for payload in payloads if payload.id == "web_search")
+
+        self.assertEqual(web_search.name, "Web_Search")
+        self.assertIn("SearXNG", web_search.content)
+        self.assertIn("crawl4ai", web_search.content)
+        self.assertIn("deep & wide", web_search.content)
+
 
 if __name__ == "__main__":
     unittest.main()
