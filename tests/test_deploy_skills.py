@@ -73,14 +73,14 @@ class DeploySkillsTest(unittest.TestCase):
             ),
         )
 
-    def test_skill_id_is_snake_case_and_display_name_is_pascal_snake_case(self):
+    def test_skill_id_is_snake_case_and_display_name_is_title_case(self):
         module = load_deploy_skills_module()
 
         payload = module.build_payload(self.build_bundle(module, "my cool-tool"))
 
         self.assertFalse(hasattr(module, "DISPLAY_NAME_OVERRIDES"))
         self.assertEqual(payload.id, "my_cool_tool")
-        self.assertEqual(payload.name, "My_Cool_Tool")
+        self.assertEqual(payload.name, "My Cool Tool")
 
     def test_question_and_brainstorming_names_follow_generic_case_rule(self):
         module = load_deploy_skills_module()
@@ -101,7 +101,7 @@ class DeploySkillsTest(unittest.TestCase):
         payloads = [payload for payload in payloads if payload is not None]
         web_search = next(payload for payload in payloads if payload.id == "web_search")
 
-        self.assertEqual(web_search.name, "Web_Search")
+        self.assertEqual(web_search.name, "Web Search")
         self.assertIn("SearXNG", web_search.content)
         self.assertIn("crawl4ai", web_search.content)
         self.assertIn("deep & wide", web_search.content)

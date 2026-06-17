@@ -406,7 +406,7 @@ def slugify(s: str) -> str:
 
 
 def display_name_for(sid: str) -> str:
-    return "_".join(part.capitalize() for part in sid.split("_") if part)
+    return " ".join(part.capitalize() for part in sid.split("_") if part)
 
 
 def fence_lang_for(relpath: str) -> str:
