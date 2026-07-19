@@ -99,6 +99,7 @@ class Filter:
         self._warned_unresolved_tool_ids = set()
         self._warned_unresolved_skill_ids = set()
         self._bg_tasks = set()
+        self._clock_offset = None
 
     def _get_client(self):
         """Lazily build a Langfuse client. Raises clearly if unavailable."""
@@ -211,11 +212,35 @@ class Filter:
             return metadata.get(key)
         return body.get(key)
 
+    def _output_items_text(self, output) -> str:
+        """Extract assistant text from OWUI's structured output items
+        (type "message" -> content parts of type "output_text")."""
+        if not isinstance(output, list):
+            return ""
+        texts = []
+        for item in output:
+            if not isinstance(item, dict) or item.get("type") != "message":
+                continue
+            text = "".join(
+                part.get("text", "")
+                for part in item.get("content") or []
+                if isinstance(part, dict) and part.get("type") == "output_text"
+            )
+            if text:
+                texts.append(text)
+        return "\n".join(texts)
+
     def _last_message_content(self, body: dict, role: str) -> str:
         for message in reversed(body.get("messages", []) or []):
             if message.get("role") == role:
                 content = message.get("content", "")
-                return content if isinstance(content, str) else str(content)
+                if not isinstance(content, str):
+                    content = str(content)
+                # Recent OpenWebUI stores assistant text in structured output
+                # items and may leave "content" empty in the outlet body.
+                if not content.strip() and role == "assistant":
+                    content = self._output_items_text(message.get("output"))
+                return content
         return ""
 
     def _model_id(self, body: dict, __model__=None) -> str:
@@ -255,20 +280,50 @@ class Filter:
             value = getattr(__user__, "email", "") or getattr(__user__, "id", "")
         return str(value).strip()
 
-    def _now_iso(self) -> str:
-        from datetime import datetime, timezone
-
-        return datetime.now(timezone.utc).isoformat()
-
     def _ingestion_event(self, event_type: str, body: dict) -> dict:
         import uuid
 
+        # Timestamps are stamped in _post_ingestion after clock calibration.
         return {
             "id": str(uuid.uuid4()),
             "type": event_type,
-            "timestamp": self._now_iso(),
             "body": body,
         }
+
+    async def _ensure_clock_offset(self, client) -> None:
+        """Calibrate against the Langfuse server clock once per process.
+
+        Langfuse uses the client-provided event timestamps as trace/observation
+        times; a skewed container clock breaks the trace/observation time join
+        and misorders traces relative to LiteLLM generations.
+        """
+        if self._clock_offset is not None:
+            return
+        try:
+            from datetime import datetime, timezone
+            from email.utils import parsedate_to_datetime
+
+            response = await client.get(
+                f"{self.valves.langfuse_host.rstrip('/')}/api/public/health"
+            )
+            server_now = parsedate_to_datetime(response.headers["date"])
+            offset = (server_now - datetime.now(timezone.utc)).total_seconds()
+            if abs(offset) > 30:
+                log.warning(
+                    "Local clock differs from Langfuse server by %.0fs; "
+                    "correcting trace timestamps.",
+                    offset,
+                )
+            self._clock_offset = offset
+        except Exception as exc:
+            log.warning("Langfuse clock calibration failed: %s", exc)
+            self._clock_offset = 0.0
+
+    def _corrected_now_iso(self) -> str:
+        from datetime import datetime, timedelta, timezone
+
+        offset = self._clock_offset or 0.0
+        return (datetime.now(timezone.utc) + timedelta(seconds=offset)).isoformat()
 
     async def _post_ingestion(self, events: list) -> None:
         import httpx
@@ -279,6 +334,12 @@ class Filter:
         url = f"{self.valves.langfuse_host.rstrip('/')}/api/public/ingestion"
         auth = (self.valves.langfuse_public_key, self.valves.langfuse_secret_key)
         async with httpx.AsyncClient(timeout=10.0) as client:
+            await self._ensure_clock_offset(client)
+            now = self._corrected_now_iso()
+            for event in events:
+                event.setdefault("timestamp", now)
+                if event.get("type") == "event-create":
+                    event["body"].setdefault("startTime", now)
             response = await client.post(url, json={"batch": events}, auth=auth)
         if response.status_code not in (200, 201, 207):
             raise RuntimeError(
@@ -328,7 +389,6 @@ class Filter:
             "trace-create",
             {
                 "id": trace_id,
-                "timestamp": self._now_iso(),
                 "name": "owui-chat",
                 "userId": self._user_identifier(__user__),
                 "sessionId": chat_id,
@@ -640,7 +700,6 @@ class Filter:
                         "id": f"owui-evt-{chat_id}-{message_id}",
                         "traceId": trace_id,
                         "name": "owui-chat-response",
-                        "startTime": self._now_iso(),
                         "input": {
                             "last_user_message": self._last_message_content(
                                 body, "user"

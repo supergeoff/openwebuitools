@@ -578,6 +578,44 @@ class SystemFilterTest(unittest.TestCase):
         self.assertEqual(observation["input"], {"last_user_message": "Question"})
         self.assertEqual(observation["output"], {"assistant_message": "Answer"})
 
+    def test_outlet_reads_assistant_text_from_structured_output_items(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        captured = []
+
+        async def capture(events):
+            captured.extend(events)
+
+        filter_._post_ingestion = capture
+
+        run_outlet(
+            filter_,
+            {
+                "model": "gpt-test",
+                "messages": [
+                    {"role": "user", "content": "Question"},
+                    {
+                        "role": "assistant",
+                        "content": "",
+                        "output": [
+                            {"type": "reasoning", "summary": []},
+                            {
+                                "type": "message",
+                                "content": [
+                                    {"type": "output_text", "text": "Answer from"},
+                                    {"type": "output_text", "text": " items"},
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
+            __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
+        )
+
+        trace = captured[0]["body"]
+        self.assertEqual(trace["output"], {"assistant_message": "Answer from items"})
+
 
 if __name__ == "__main__":
     unittest.main()
