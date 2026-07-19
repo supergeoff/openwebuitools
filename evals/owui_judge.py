@@ -53,7 +53,7 @@ def extract_json_object(text: str) -> dict:
 def parse_judge_json(text: str) -> list[Evaluation]:
     payload = extract_json_object(text)
     comment = str(payload.get("comment", "") or "")[:240]
-    return [
+    evaluations = [
         Evaluation(
             name=score_name,
             value=clamp_score(payload[source_name]),
@@ -61,7 +61,11 @@ def parse_judge_json(text: str) -> list[Evaluation]:
             data_type="NUMERIC",
         )
         for source_name, score_name in SCORE_FIELDS
+        if source_name in payload
     ]
+    if not evaluations:
+        raise ValueError("Judge response contained none of the expected score fields.")
+    return evaluations
 
 
 def map_trace(*, item, **kwargs) -> EvaluatorInputs:
