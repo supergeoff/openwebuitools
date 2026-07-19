@@ -336,9 +336,15 @@ class Filter:
         async with httpx.AsyncClient(timeout=10.0) as client:
             await self._ensure_clock_offset(client)
             now = self._corrected_now_iso()
+            # Stamp everything explicitly: Langfuse stores client timestamps
+            # verbatim, but fills missing ones server-side in the server's
+            # local timezone mislabeled as UTC, which skews trace times and
+            # breaks the trace/observation join.
             for event in events:
                 event.setdefault("timestamp", now)
-                if event.get("type") == "event-create":
+                if event.get("type") == "trace-create":
+                    event["body"].setdefault("timestamp", now)
+                elif event.get("type") == "event-create":
                     event["body"].setdefault("startTime", now)
             response = await client.post(url, json={"batch": events}, auth=auth)
         if response.status_code not in (200, 201, 207):
