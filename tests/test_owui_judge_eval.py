@@ -94,14 +94,26 @@ class OwuiJudgeEvalTest(unittest.TestCase):
         calls = []
 
         class Langfuse:
-            def evaluate_batch(self, **kwargs):
+            def run_batched_evaluation(self, **kwargs):
                 calls.append(kwargs)
                 return {"ok": True}
 
         result = module.run_batch(Langfuse(), evaluator=lambda **kwargs: [])
 
         self.assertEqual(result, {"ok": True})
-        self.assertEqual(calls[0]["filter"], {"tags": ["owui", "system"]})
+        self.assertEqual(calls[0]["scope"], "traces")
+        self.assertEqual(calls[0]["evaluators"], [calls[0]["evaluators"][0]])
+        self.assertEqual(
+            json.loads(calls[0]["filter"]),
+            [
+                {
+                    "column": "tags",
+                    "type": "arrayOptions",
+                    "operator": "all of",
+                    "value": ["owui", "system"],
+                }
+            ],
+        )
 
     def test_manual_eval_workflow_is_present(self):
         workflow = ROOT / ".github" / "workflows" / "run-langfuse-judge.yml"

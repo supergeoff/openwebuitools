@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install langfuse
+        run: pip install "langfuse>=4,<5"
 
       - name: Deploy prompts to Langfuse
         env:

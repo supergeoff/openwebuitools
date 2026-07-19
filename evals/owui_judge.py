@@ -94,22 +94,22 @@ def build_openai_client():
     )
 
 
-def compile_judge_prompt(langfuse: Langfuse, evaluator_inputs: EvaluatorInputs) -> str:
+def compile_judge_prompt(langfuse: Langfuse, input: Any, output: Any, metadata: Any) -> str:
     prompt = langfuse.get_prompt(
         "evaluator_owui_judge",
         label=require_env("LANGFUSE_PROMPT_LABEL"),
         cache_ttl_seconds=0,
     )
     return prompt.compile(
-        input=json.dumps(evaluator_inputs.input, ensure_ascii=True),
-        output=json.dumps(evaluator_inputs.output, ensure_ascii=True),
-        metadata=json.dumps(evaluator_inputs.metadata or {}, ensure_ascii=True),
+        input=json.dumps(input, ensure_ascii=True),
+        output=json.dumps(output, ensure_ascii=True),
+        metadata=json.dumps(metadata or {}, ensure_ascii=True),
     )
 
 
 def build_llm_evaluator(langfuse: Langfuse, openai_client, model: str):
-    def evaluate(*, evaluator_inputs, **kwargs):
-        judge_prompt = compile_judge_prompt(langfuse, evaluator_inputs)
+    def evaluate(*, input, output, expected_output=None, metadata=None, **kwargs):
+        judge_prompt = compile_judge_prompt(langfuse, input, output, metadata)
         response = openai_client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": judge_prompt}],
@@ -122,11 +122,20 @@ def build_llm_evaluator(langfuse: Langfuse, openai_client, model: str):
 
 
 def run_batch(langfuse: Langfuse, evaluator) -> Any:
-    return langfuse.evaluate_batch(
+    return langfuse.run_batched_evaluation(
+        scope="traces",
         mapper=map_trace,
-        evaluators={"owui_judge": evaluator},
-        traces=True,
-        filter={"tags": ["owui", "system"]},
+        evaluators=[evaluator],
+        filter=json.dumps(
+            [
+                {
+                    "column": "tags",
+                    "type": "arrayOptions",
+                    "operator": "all of",
+                    "value": ["owui", "system"],
+                }
+            ]
+        ),
     )
 
 
@@ -140,6 +149,15 @@ def main() -> None:
     )
     result = run_batch(langfuse, evaluator)
     print(result)
+    failed_items = getattr(result, "total_items_failed", 0) or 0
+    failed_evaluations = getattr(result, "total_evaluations_failed", 0) or 0
+    if getattr(result, "completed", True) is False or failed_items or failed_evaluations:
+        print(
+            "Error: batch evaluation did not complete cleanly "
+            f"(completed={getattr(result, 'completed', None)}, "
+            f"failed_items={failed_items}, failed_evaluations={failed_evaluations})."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
