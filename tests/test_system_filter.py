@@ -513,6 +513,22 @@ class SystemFilterTest(unittest.TestCase):
         self.assertEqual(body["metadata"]["status"], "pending")
         self.assertEqual(body["metadata"]["model"], "gpt-test")
 
+    def test_inlet_skips_tracing_for_temporary_chats(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.enabled = False
+        captured = []
+        filter_._spawn_ingestion = lambda events: captured.extend(events)
+
+        run_inlet(
+            filter_,
+            {"messages": [{"role": "user", "content": "Hello"}]},
+            __user__={"id": "user-1"},
+            __metadata__={"chat_id": "local:socket-1", "message_id": "msg-1"},
+        )
+
+        self.assertEqual(captured, [])
+
     def test_inlet_skips_tracing_without_chat_or_message_id(self):
         module = load_filter_module()
         filter_ = module.Filter()

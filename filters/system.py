@@ -389,6 +389,10 @@ class Filter:
         ).strip()
         if not chat_id or not message_id:
             return
+        # Temporary chats (chat_id "local:<socket>") are not persisted by
+        # OpenWebUI; honor that and do not trace them either.
+        if chat_id.startswith("local:"):
+            return
 
         trace_id = self._build_trace_id(chat_id, message_id)
         event = self._ingestion_event(
@@ -678,6 +682,8 @@ class Filter:
             log.warning(
                 "Skipping Langfuse trace recording: missing chat_id or message_id."
             )
+            return None
+        if chat_id.startswith("local:"):
             return None
 
         try:
