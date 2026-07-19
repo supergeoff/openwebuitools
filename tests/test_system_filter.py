@@ -478,50 +478,67 @@ class SystemFilterTest(unittest.TestCase):
         module = load_filter_module()
         filter_ = module.Filter()
 
-        class Langfuse:
-            @staticmethod
-            def create_trace_id(*, seed=None):
-                return f"trace::{seed}"
+        self.assertEqual(
+            filter_._build_trace_id("chat-1", "message-2"),
+            "owui-chat-1-message-2",
+        )
 
-        langfuse_module = types.ModuleType("langfuse")
-        langfuse_module.Langfuse = Langfuse
-        original = sys.modules.get("langfuse")
-        sys.modules["langfuse"] = langfuse_module
-        try:
-            self.assertEqual(
-                filter_._build_trace_id("chat-1", "message-2"),
-                "trace::owui:chat-1:message-2",
-            )
-        finally:
-            if original is None:
-                sys.modules.pop("langfuse", None)
-            else:
-                sys.modules["langfuse"] = original
+    def test_inlet_creates_trace_with_user_session_and_input(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.enabled = False
+        captured = []
+        filter_._spawn_ingestion = lambda events: captured.extend(events)
+
+        run_inlet(
+            filter_,
+            {
+                "model": "gpt-test",
+                "messages": [{"role": "user", "content": "Question"}],
+            },
+            __user__={"id": "user-1", "email": "geoff@example.com"},
+            __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
+        )
+
+        self.assertEqual(len(captured), 1)
+        event = captured[0]
+        self.assertEqual(event["type"], "trace-create")
+        body = event["body"]
+        self.assertEqual(body["id"], "owui-chat-1-msg-1")
+        self.assertEqual(body["name"], "owui-chat")
+        self.assertEqual(body["userId"], "geoff@example.com")
+        self.assertEqual(body["sessionId"], "chat-1")
+        self.assertEqual(body["tags"], ["owui", "system"])
+        self.assertEqual(body["input"], {"last_user_message": "Question"})
+        self.assertEqual(body["metadata"]["status"], "pending")
+        self.assertEqual(body["metadata"]["model"], "gpt-test")
+
+    def test_inlet_skips_tracing_without_chat_or_message_id(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.enabled = False
+        captured = []
+        filter_._spawn_ingestion = lambda events: captured.extend(events)
+
+        run_inlet(
+            filter_,
+            {"messages": [{"role": "user", "content": "Hello"}]},
+            __user__={"id": "user-1"},
+        )
+
+        self.assertEqual(captured, [])
 
     def test_outlet_records_langfuse_trace_with_prompt_metadata(self):
         module = load_filter_module()
         filter_ = module.Filter()
         filter_.valves.forced_tool_ids = "server:mcp:memory"
         filter_.valves.forced_skill_ids = "brainstorming"
-        started = []
+        captured = []
 
-        class Observation:
-            def end(self):
-                started[-1]["ended"] = True
+        async def capture(events):
+            captured.extend(events)
 
-        class Client:
-            def start_observation(self, **kwargs):
-                started.append(kwargs)
-                return Observation()
-
-            def _create_trace_tags_via_ingestion(self, **kwargs):
-                started.append({"trace_tags": kwargs})
-
-            def flush(self):
-                started.append({"flushed": True})
-
-        filter_._client = Client()
-        filter_._build_trace_id = lambda chat_id, message_id: f"trace:{chat_id}:{message_id}"
+        filter_._post_ingestion = capture
 
         run_outlet(
             filter_,
@@ -532,30 +549,34 @@ class SystemFilterTest(unittest.TestCase):
                     {"role": "assistant", "content": "Answer"},
                 ],
             },
-            __user__={"id": "user-1"},
+            __user__={"id": "user-1", "email": "geoff@example.com"},
             __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
         )
 
-        trace = started[0]
-        self.assertEqual(trace["trace_context"], {"trace_id": "trace:chat-1:msg-1"})
-        self.assertEqual(trace["name"], "owui-chat-response")
-        self.assertEqual(trace["input"], {"last_user_message": "Question"})
+        self.assertEqual(len(captured), 2)
+        trace_event, observation_event = captured
+
+        self.assertEqual(trace_event["type"], "trace-create")
+        trace = trace_event["body"]
+        self.assertEqual(trace["id"], "owui-chat-1-msg-1")
+        self.assertEqual(trace["name"], "owui-chat")
+        self.assertEqual(trace["userId"], "geoff@example.com")
+        self.assertEqual(trace["sessionId"], "chat-1")
+        self.assertEqual(trace["tags"], ["owui", "system"])
         self.assertEqual(trace["output"], {"assistant_message": "Answer"})
+        self.assertEqual(trace["metadata"]["status"], "completed")
         self.assertNotIn("prompt_modules", trace["metadata"])
         self.assertEqual(trace["metadata"]["forced_tool_ids"], "server:mcp:memory")
         self.assertEqual(trace["metadata"]["forced_skill_ids"], "brainstorming")
         self.assertEqual(trace["metadata"]["model"], "gpt-test")
-        self.assertTrue(started[0]["ended"])
-        self.assertEqual(
-            started[1],
-            {
-                "trace_tags": {
-                    "trace_id": "trace:chat-1:msg-1",
-                    "tags": ["owui", "system"],
-                }
-            },
-        )
-        self.assertEqual(started[2], {"flushed": True})
+
+        self.assertEqual(observation_event["type"], "event-create")
+        observation = observation_event["body"]
+        self.assertEqual(observation["id"], "owui-evt-chat-1-msg-1")
+        self.assertEqual(observation["traceId"], "owui-chat-1-msg-1")
+        self.assertEqual(observation["name"], "owui-chat-response")
+        self.assertEqual(observation["input"], {"last_user_message": "Question"})
+        self.assertEqual(observation["output"], {"assistant_message": "Answer"})
 
 
 if __name__ == "__main__":

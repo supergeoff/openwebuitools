@@ -1,8 +1,10 @@
 """
 title: Langfuse Feedback
 author: geoff
-requirements: langfuse
-description: Send explicit OpenWebUI message feedback to Langfuse scores.
+description: >
+  Send explicit OpenWebUI message feedback to Langfuse scores via the public
+  scores API. Scores attach to the deterministic trace id
+  "owui-{chat_id}-{message_id}" shared with the system filter.
 """
 
 from __future__ import annotations
@@ -67,22 +69,6 @@ class Action:
 
     def __init__(self):
         self.valves = self.Valves()
-        self._client = None
-
-    def _get_client(self):
-        if self._client is not None:
-            return self._client
-        if not (self.valves.langfuse_public_key and self.valves.langfuse_secret_key):
-            raise RuntimeError("Langfuse public and secret keys are required.")
-
-        from langfuse import Langfuse
-
-        self._client = Langfuse(
-            public_key=self.valves.langfuse_public_key,
-            secret_key=self.valves.langfuse_secret_key,
-            host=self.valves.langfuse_host,
-        )
-        return self._client
 
     def _metadata_value(
         self, body: dict, __metadata__: Optional[dict], key: str, *body_aliases: str
@@ -98,9 +84,8 @@ class Action:
         return body.get(key)
 
     def _build_trace_id(self, chat_id: str, message_id: str) -> str:
-        from langfuse import Langfuse
-
-        return Langfuse.create_trace_id(seed=f"owui:{chat_id}:{message_id}")
+        # Must stay identical to Filter._build_trace_id in filters/system.py.
+        return f"owui-{chat_id}-{message_id}"
 
     def _user_id(self, __user__: Optional[dict]) -> str:
         if not __user__:
@@ -142,30 +127,42 @@ class Action:
     def _model_id(self, body: dict) -> str:
         return str(body.get("model", "") or "")
 
-    def _create_score(self, client, **score) -> None:
-        create_score = getattr(client, "create_score", None)
-        if callable(create_score):
-            create_score(**score)
-            return
+    async def _post_score(
+        self,
+        *,
+        score_id: str,
+        trace_id: str,
+        name: str,
+        value,
+        data_type: str,
+        comment: str,
+        metadata: dict,
+    ) -> None:
+        import httpx
 
-        api = getattr(client, "api", None)
-        scores = getattr(api, "scores", None)
-        create = getattr(scores, "create", None)
-        if callable(create):
-            create(**score)
-            return
+        if not (self.valves.langfuse_public_key and self.valves.langfuse_secret_key):
+            raise RuntimeError("Langfuse public and secret keys are required.")
 
-        legacy = getattr(api, "legacy", None)
-        score_v1 = getattr(legacy, "score_v1", None)
-        legacy_create = getattr(score_v1, "create", None)
-        if callable(legacy_create):
-            legacy_score = dict(score)
-            if "score_id" in legacy_score:
-                legacy_score["id"] = legacy_score.pop("score_id")
-            legacy_create(**legacy_score)
-            return
+        payload = {
+            "id": score_id,
+            "traceId": trace_id,
+            "name": name,
+            "value": value,
+            "dataType": data_type,
+            "metadata": metadata,
+        }
+        if comment:
+            payload["comment"] = comment
 
-        raise AttributeError("Langfuse client has no supported score creation API.")
+        url = f"{self.valves.langfuse_host.rstrip('/')}/api/public/scores"
+        auth = (self.valves.langfuse_public_key, self.valves.langfuse_secret_key)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json=payload, auth=auth)
+        if response.status_code not in (200, 201):
+            raise RuntimeError(
+                f"Langfuse score creation failed ({response.status_code}): "
+                f"{response.text[:500]}"
+            )
 
     async def action(
         self,
@@ -217,33 +214,28 @@ class Action:
         }
 
         try:
-            client = self._get_client()
-            self._create_score(
-                client,
+            await self._post_score(
+                score_id=self._score_id(
+                    trace_id, user_id, "owui_user_feedback", feedback_type
+                ),
                 trace_id=trace_id,
                 name="owui_user_feedback",
                 value=feedback_value,
                 data_type="NUMERIC",
-                comment=comment or None,
+                comment=comment,
                 metadata=metadata,
-                score_id=self._score_id(
-                    trace_id, user_id, "owui_user_feedback", feedback_type
-                ),
             )
-            self._create_score(
-                client,
+            await self._post_score(
+                score_id=self._score_id(
+                    trace_id, user_id, "owui_feedback_category", feedback_type
+                ),
                 trace_id=trace_id,
                 name="owui_feedback_category",
                 value=feedback_type,
                 data_type="CATEGORICAL",
-                comment=comment or None,
+                comment=comment,
                 metadata=metadata,
-                score_id=self._score_id(
-                    trace_id, user_id, "owui_feedback_category", feedback_type
-                ),
             )
-            if hasattr(client, "flush"):
-                client.flush()
         except Exception as exc:
             log.warning("Langfuse feedback failed: %s", exc)
             await self._notify(

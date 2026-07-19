@@ -4,10 +4,17 @@ author: geoff
 requirements: langfuse
 description: >
   Single source of truth for the system prompt across ALL models.
-  The prompt itself lives in Langfuse (project "owui") as multiple text prompt
-  modules, fetched in order and injected as the system message on every request.
-  The only per-user runtime value managed here is hindsight_bankid, exposed to
-  the memory prompt as {{hindsight_bankid}}.
+  The prompt itself lives in Langfuse as multiple text prompt modules, fetched
+  in order and injected as the system message on every request. The only
+  per-user runtime value managed here is hindsight_bankid, exposed to the
+  memory prompt as {{hindsight_bankid}}.
+  Also records one Langfuse trace per assistant message with the deterministic
+  id "owui-{chat_id}-{message_id}" (Langfuse ingestion API): created at inlet
+  time (so failed requests still leave a trace with input, user and session),
+  completed at outlet time with the assistant output. The LiteLLM generation
+  joins the same trace when the OpenWebUI connection to LiteLLM sends the
+  custom header "langfuse_existing_trace_id: owui-{{CHAT_ID}}-{{MESSAGE_ID}}".
+  The langfuse_feedback action attaches its scores with the same id scheme.
 """
 
 import logging
@@ -59,6 +66,13 @@ class Filter:
             default=300,
             description="Langfuse SDK cache TTL. Edits propagate after this delay.",
         )
+        enable_tracing: bool = Field(
+            default=True,
+            description=(
+                "Record one Langfuse trace per assistant message "
+                "(created at request time, completed at response time)."
+            ),
+        )
         forced_tool_ids: str = Field(
             default="",
             description=(
@@ -84,7 +98,7 @@ class Filter:
         self._client = None
         self._warned_unresolved_tool_ids = set()
         self._warned_unresolved_skill_ids = set()
-        self._warned_missing_trace_tag_support = False
+        self._bg_tasks = set()
 
     def _get_client(self):
         """Lazily build a Langfuse client. Raises clearly if unavailable."""
@@ -183,9 +197,11 @@ class Filter:
         return self._fetch_policy(__user__).strip()
 
     def _build_trace_id(self, chat_id: str, message_id: str) -> str:
-        from langfuse import Langfuse
-
-        return Langfuse.create_trace_id(seed=f"owui:{chat_id}:{message_id}")
+        # Deterministic id shared with the langfuse_feedback action and with
+        # LiteLLM (OpenWebUI connection header langfuse_existing_trace_id).
+        # Plain string on purpose: header templating cannot hash, and the
+        # Langfuse ingestion API accepts arbitrary string trace ids.
+        return f"owui-{chat_id}-{message_id}"
 
     def _metadata_value(self, body: dict, __metadata__: Optional[dict], key: str):
         if __metadata__ and __metadata__.get(key) is not None:
@@ -229,18 +245,102 @@ class Filter:
     def _trace_tags(self) -> list[str]:
         return list(TRACE_TAGS)
 
-    def _tag_trace(self, client, trace_id: str) -> None:
-        tag_trace = getattr(client, "_create_trace_tags_via_ingestion", None)
-        if callable(tag_trace):
-            tag_trace(trace_id=trace_id, tags=self._trace_tags())
+    def _user_identifier(self, __user__: Optional[dict]) -> str:
+        """Prefer the email, fall back to the OpenWebUI user id."""
+        if not __user__:
+            return ""
+        if isinstance(__user__, dict):
+            value = __user__.get("email") or __user__.get("id") or ""
+        else:
+            value = getattr(__user__, "email", "") or getattr(__user__, "id", "")
+        return str(value).strip()
+
+    def _now_iso(self) -> str:
+        from datetime import datetime, timezone
+
+        return datetime.now(timezone.utc).isoformat()
+
+    def _ingestion_event(self, event_type: str, body: dict) -> dict:
+        import uuid
+
+        return {
+            "id": str(uuid.uuid4()),
+            "type": event_type,
+            "timestamp": self._now_iso(),
+            "body": body,
+        }
+
+    async def _post_ingestion(self, events: list) -> None:
+        import httpx
+
+        if not (self.valves.langfuse_public_key and self.valves.langfuse_secret_key):
+            raise RuntimeError("Langfuse public and secret keys are required for tracing.")
+
+        url = f"{self.valves.langfuse_host.rstrip('/')}/api/public/ingestion"
+        auth = (self.valves.langfuse_public_key, self.valves.langfuse_secret_key)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(url, json={"batch": events}, auth=auth)
+        if response.status_code not in (200, 201, 207):
+            raise RuntimeError(
+                f"Langfuse ingestion failed ({response.status_code}): {response.text[:500]}"
+            )
+        errors = (response.json() or {}).get("errors") or []
+        if errors:
+            raise RuntimeError(f"Langfuse ingestion rejected events: {errors}")
+
+    def _spawn_ingestion(self, events: list) -> None:
+        """Fire-and-forget so tracing never delays or breaks a chat request."""
+        import asyncio
+
+        async def _run():
+            try:
+                await self._post_ingestion(events)
+            except Exception as exc:
+                log.error("Langfuse trace ingestion failed: %s", exc)
+
+        task = asyncio.create_task(_run())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    def _record_request_trace(
+        self,
+        body: dict,
+        __user__: Optional[dict],
+        __metadata__: Optional[dict],
+        __chat_id__,
+        __message_id__,
+        __model__,
+    ) -> None:
+        """Create the trace at request time so failed messages are traced too."""
+        chat_id = str(
+            __chat_id__ or self._metadata_value(body, __metadata__, "chat_id") or ""
+        ).strip()
+        message_id = str(
+            __message_id__
+            or self._metadata_value(body, __metadata__, "message_id")
+            or ""
+        ).strip()
+        if not chat_id or not message_id:
             return
 
-        if not self._warned_missing_trace_tag_support:
-            self._warned_missing_trace_tag_support = True
-            log.warning(
-                "Langfuse client does not expose trace tag ingestion; "
-                "judge eval filtering by tags may skip system traces."
-            )
+        trace_id = self._build_trace_id(chat_id, message_id)
+        event = self._ingestion_event(
+            "trace-create",
+            {
+                "id": trace_id,
+                "timestamp": self._now_iso(),
+                "name": "owui-chat",
+                "userId": self._user_identifier(__user__),
+                "sessionId": chat_id,
+                "tags": self._trace_tags(),
+                "input": {"last_user_message": self._last_message_content(body, "user")},
+                "metadata": {
+                    **self._trace_metadata(body, __metadata__, __model__),
+                    "status": "pending",
+                },
+            },
+        )
+        self._spawn_ingestion([event])
 
     def _dedupe_ids(self, ids) -> list[str]:
         result = []
@@ -448,8 +548,25 @@ class Filter:
         self._log_unresolved_forced_skill_ids(unresolved_skill_ids)
 
     async def inlet(
-        self, body: dict, __request__=None, __user__: Optional[dict] = None
+        self,
+        body: dict,
+        __request__=None,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __chat_id__=None,
+        __message_id__=None,
+        __model__=None,
     ) -> dict:
+        # Trace first: a failing prompt fetch (or any downstream error) must
+        # still leave a trace with input, user and session in Langfuse.
+        if self.valves.enable_tracing:
+            try:
+                self._record_request_trace(
+                    body, __user__, __metadata__, __chat_id__, __message_id__, __model__
+                )
+            except Exception as exc:
+                log.error("Langfuse request tracing failed: %s", exc)
+
         await self._force_tool_ids(body, __request__)
         await self._force_skill_ids(body, __user__)
 
@@ -480,6 +597,9 @@ class Filter:
         __message_id__=None,
         __model__=None,
     ) -> None:
+        if not self.valves.enable_tracing:
+            return None
+
         chat_id = str(
             __chat_id__ or self._metadata_value(body, __metadata__, "chat_id") or ""
         ).strip()
@@ -495,26 +615,44 @@ class Filter:
             return None
 
         try:
-            client = self._get_client()
             metadata = self._trace_metadata(body, __metadata__, __model__)
             trace_id = self._build_trace_id(chat_id, message_id)
-            observation = client.start_observation(
-                name="owui-chat-response",
-                trace_context={"trace_id": trace_id},
-                input={"last_user_message": self._last_message_content(body, "user")},
-                output={
-                    "assistant_message": self._last_message_content(
-                        body, "assistant"
-                    )
-                },
-                metadata=metadata,
-            )
-            if hasattr(observation, "end"):
-                observation.end()
-            self._tag_trace(client, trace_id)
-            if hasattr(client, "flush"):
-                client.flush()
+            assistant_message = self._last_message_content(body, "assistant")
+            events = [
+                # Complete the trace created at inlet time (upsert by id).
+                # userId/sessionId/tags are repeated so the trace stays whole
+                # even if the inlet event was lost.
+                self._ingestion_event(
+                    "trace-create",
+                    {
+                        "id": trace_id,
+                        "name": "owui-chat",
+                        "userId": self._user_identifier(__user__),
+                        "sessionId": chat_id,
+                        "tags": self._trace_tags(),
+                        "output": {"assistant_message": assistant_message},
+                        "metadata": {**metadata, "status": "completed"},
+                    },
+                ),
+                self._ingestion_event(
+                    "event-create",
+                    {
+                        "id": f"owui-evt-{chat_id}-{message_id}",
+                        "traceId": trace_id,
+                        "name": "owui-chat-response",
+                        "startTime": self._now_iso(),
+                        "input": {
+                            "last_user_message": self._last_message_content(
+                                body, "user"
+                            )
+                        },
+                        "output": {"assistant_message": assistant_message},
+                        "metadata": metadata,
+                    },
+                ),
+            ]
+            await self._post_ingestion(events)
         except Exception as exc:
-            log.warning("Langfuse trace recording failed: %s", exc)
+            log.error("Langfuse trace recording failed: %s", exc)
 
         return None
