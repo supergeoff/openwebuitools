@@ -5,7 +5,8 @@ requirements: langfuse
 description: >
   Single source of truth for the system prompt across ALL models.
   The prompt itself lives in Langfuse as multiple text prompt modules, fetched
-  in order and injected as the system message on every request. The only
+  concurrently (assembled in declaration order) and injected as the system
+  message on every request. The only
   per-user runtime value managed here is hindsight_bankid, exposed to the
   memory prompt as {{hindsight_bankid}}.
   Also records one Langfuse trace per assistant message with the deterministic
@@ -63,8 +64,12 @@ class Filter:
             description="Langfuse label to fetch (e.g. production, latest).",
         )
         cache_ttl_seconds: int = Field(
-            default=300,
-            description="Langfuse SDK cache TTL. Edits propagate after this delay.",
+            default=900,
+            description=(
+                "Langfuse SDK prompt cache TTL. The SDK serves stale entries "
+                "and refreshes in the background, so this only bounds how "
+                "long prompt edits take to propagate."
+            ),
         )
         enable_tracing: bool = Field(
             default=True,
@@ -158,13 +163,28 @@ class Filter:
             )
         return text.strip()
 
-    def _fetch_policy(self, __user__: Optional[dict]) -> str:
-        sections = []
-        for prompt_name in self._prompt_module_names():
-            variables = self._prompt_variables(prompt_name, __user__)
-            text = self._fetch_prompt_module(prompt_name, variables)
-            sections.append(f"# Prompt Module: {prompt_name}\n\n{text}")
-        return "\n\n".join(sections)
+    async def _fetch_policy(self, __user__: Optional[dict]) -> str:
+        import asyncio
+
+        # get_prompt is a blocking SDK call: run the fetches concurrently in
+        # threads instead of serially on the event loop. gather preserves the
+        # module declaration order, so the assembled prompt is unchanged.
+        self._get_client()
+        prompt_names = self._prompt_module_names()
+        texts = await asyncio.gather(
+            *(
+                asyncio.to_thread(
+                    self._fetch_prompt_module,
+                    prompt_name,
+                    self._prompt_variables(prompt_name, __user__),
+                )
+                for prompt_name in prompt_names
+            )
+        )
+        return "\n\n".join(
+            f"# Prompt Module: {prompt_name}\n\n{text}"
+            for prompt_name, text in zip(prompt_names, texts)
+        )
 
     def _get_user_valve(self, __user__: Optional[dict], key: str) -> Optional[str]:
         """Read OpenWebUI UserValves from dict or Pydantic-style objects."""
@@ -191,11 +211,11 @@ class Filter:
             return {}
         return {"hindsight_bankid": self._resolve_bankid(__user__)}
 
-    def _build_injected_prompt(
+    async def _build_injected_prompt(
         self,
         __user__: Optional[dict],
     ) -> str:
-        return self._fetch_policy(__user__).strip()
+        return (await self._fetch_policy(__user__)).strip()
 
     def _build_trace_id(self, chat_id: str, message_id: str) -> str:
         # Deterministic id shared with the langfuse_feedback action and with
@@ -643,7 +663,7 @@ class Filter:
         if not self.valves.enabled:
             return body
 
-        injected_prompt = self._build_injected_prompt(__user__)
+        injected_prompt = await self._build_injected_prompt(__user__)
         if not injected_prompt:
             return body
 

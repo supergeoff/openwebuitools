@@ -377,7 +377,7 @@ class SystemFilterTest(unittest.TestCase):
             ],
         )
 
-    def test_split_prompts_are_fetched_in_order_and_only_memory_receives_bankid(self):
+    def test_split_prompts_assemble_in_order_and_only_memory_receives_bankid(self):
         module = load_filter_module()
         module.PROMPT_MODULES = ("core", "task_management", "memory", "tools")
         filter_ = module.Filter()
@@ -406,20 +406,22 @@ class SystemFilterTest(unittest.TestCase):
             __user__={"valves": {"hindsight_bankid": "bank-1"}},
         )
 
+        # Fetches run concurrently; only the set of fetched modules is
+        # deterministic, the assembled section order is asserted below.
         self.assertEqual(
-            [name for name, _ in calls],
-            ["core", "task_management", "memory", "tools"],
+            sorted(name for name, _ in calls),
+            sorted(["core", "task_management", "memory", "tools"]),
         )
         self.assertEqual(
             [kwargs["label"] for _, kwargs in calls],
             ["production", "production", "production", "production"],
         )
-        self.assertEqual(Prompt.compile_calls, [
+        self.assertEqual(sorted(Prompt.compile_calls), sorted([
             ("core", {}),
             ("task_management", {}),
             ("memory", {"hindsight_bankid": "bank-1"}),
             ("tools", {}),
-        ])
+        ]))
         content = result["messages"][0]["content"]
         self.assertLess(
             content.index("# Prompt Module: core"),
