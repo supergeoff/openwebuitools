@@ -53,7 +53,7 @@ class SystemFilterPassthroughTest(unittest.TestCase):
         module = load_filter_module()
         filter_ = module.Filter()
         captured = []
-        filter_._spawn_ingestion = captured.extend
+        filter_._spawn_export = captured.extend
 
         run_inlet(
             filter_,
@@ -62,7 +62,15 @@ class SystemFilterPassthroughTest(unittest.TestCase):
         )
 
         self.assertEqual(len(captured), 1)
-        self.assertEqual(captured[0]["body"]["id"], "owui-chat-1-msg-1")
+        self.assertEqual(
+            captured[0]["traceId"], filter_._build_trace_id("chat-1", "msg-1")
+        )
+        passthrough = [
+            item["value"]["stringValue"]
+            for item in captured[0]["attributes"]
+            if item["key"] == "langfuse.trace.metadata.passthrough"
+        ]
+        self.assertEqual(passthrough, ["true"])
 
     def test_forced_skill_validation_uses_get_skills_on_recent_open_webui(self):
         module = load_filter_module()
