@@ -74,46 +74,120 @@ class OwuiJudgeEvalTest(unittest.TestCase):
         self.assertTrue(all(score.data_type == "NUMERIC" for score in scores))
         self.assertTrue(all(score.comment == "Bonne reponse, recherche faible." for score in scores))
 
-    def test_mapper_keeps_trace_input_output_and_metadata(self):
+    def test_mapper_keeps_observation_input_output_and_metadata(self):
         module = load_eval_module()
-        trace = types.SimpleNamespace(
-            input={"last_user_message": "Question"},
+        observation = types.SimpleNamespace(
+            input='{"last_user_message": "Question"}',
             output={"assistant_message": "Answer"},
             metadata={"prompt_label": "production"},
         )
 
-        mapped = module.map_trace(item=trace)
+        mapped = module.map_observation(observation)
 
-        self.assertEqual(mapped.input, trace.input)
-        self.assertEqual(mapped.output, trace.output)
+        self.assertEqual(mapped.input, {"last_user_message": "Question"})
+        self.assertEqual(mapped.output, {"assistant_message": "Answer"})
         self.assertIsNone(mapped.expected_output)
-        self.assertEqual(mapped.metadata, trace.metadata)
+        self.assertEqual(mapped.metadata, observation.metadata)
 
-    def test_batch_eval_filters_system_traces(self):
+    def test_root_observations_are_read_page_by_page_from_observations_v2(self):
         module = load_eval_module()
         calls = []
+        pages = {
+            None: (["obs-1", "obs-2"], "cursor-2"),
+            "cursor-2": (["obs-3"], None),
+        }
+
+        class Observations:
+            def get_many(self, **kwargs):
+                calls.append(kwargs)
+                data, cursor = pages[kwargs["cursor"]]
+                return types.SimpleNamespace(
+                    data=data, meta=types.SimpleNamespace(cursor=cursor)
+                )
+
+        langfuse = types.SimpleNamespace(
+            api=types.SimpleNamespace(observations=Observations())
+        )
+
+        observations = list(module.iter_root_observations(langfuse, page_size=2))
+
+        self.assertEqual(observations, ["obs-1", "obs-2", "obs-3"])
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["name"], "owui-chat")
+        self.assertTrue(calls[0]["is_root_observation"])
+        self.assertEqual(calls[0]["fields"], "core,basic,io,metadata")
+        self.assertNotIn("parse_io_as_json", calls[0])
+        self.assertEqual(calls[1]["cursor"], "cursor-2")
+
+    def test_run_judge_scores_trace_and_root_observation_with_stable_ids(self):
+        module = load_eval_module()
+        scores = []
+        flushed = []
 
         class Langfuse:
-            def run_batched_evaluation(self, **kwargs):
-                calls.append(kwargs)
-                return {"ok": True}
+            def create_score(self, **kwargs):
+                scores.append(kwargs)
 
-        result = module.run_batch(Langfuse(), evaluator=lambda **kwargs: [])
+            def flush(self):
+                flushed.append(True)
 
-        self.assertEqual(result, {"ok": True})
-        self.assertEqual(calls[0]["scope"], "traces")
-        self.assertEqual(calls[0]["evaluators"], [calls[0]["evaluators"][0]])
-        self.assertEqual(
-            json.loads(calls[0]["filter"]),
-            [
-                {
-                    "column": "tags",
-                    "type": "arrayOptions",
-                    "operator": "all of",
-                    "value": ["owui", "system"],
-                }
-            ],
+        observation = types.SimpleNamespace(
+            id="root-1",
+            trace_id="trace-1",
+            input='{"last_user_message": "Question"}',
+            output='{"assistant_message": "Answer"}',
+            metadata={},
         )
+
+        def evaluator(**kwargs):
+            self.assertEqual(kwargs["input"], {"last_user_message": "Question"})
+            return module.parse_judge_json(
+                json.dumps({"overall_quality": 0.6, "comment": "ok"})
+            )
+
+        summary = module.run_judge(Langfuse(), evaluator, [observation])
+
+        self.assertEqual(summary, {"items": 1, "scores": 1, "failed": 0})
+        self.assertEqual(flushed, [True])
+        self.assertEqual(scores[0]["trace_id"], "trace-1")
+        self.assertEqual(scores[0]["observation_id"], "root-1")
+        self.assertEqual(scores[0]["name"], "judge_overall_quality")
+        self.assertEqual(scores[0]["value"], 0.6)
+        self.assertEqual(scores[0]["score_id"], "judge:judge_overall_quality:root-1")
+
+    def test_run_judge_counts_evaluator_failures(self):
+        module = load_eval_module()
+
+        class Langfuse:
+            def create_score(self, **kwargs):
+                raise AssertionError("no score expected")
+
+            def flush(self):
+                pass
+
+        observation = types.SimpleNamespace(
+            id="root-1", trace_id="trace-1", input={}, output={}, metadata={}
+        )
+
+        def failing_evaluator(**kwargs):
+            raise RuntimeError("Invalid model name")
+
+        summary = module.run_judge(Langfuse(), failing_evaluator, [observation])
+
+        self.assertEqual(summary, {"items": 1, "scores": 0, "failed": 1})
+
+    def test_lookback_is_optional(self):
+        module = load_eval_module()
+        from datetime import datetime, timezone
+        from unittest import mock
+
+        now = datetime(2026, 10, 2, tzinfo=timezone.utc)
+        with mock.patch.dict("os.environ", {"JUDGE_LOOKBACK_DAYS": ""}):
+            self.assertIsNone(module.lookback_start(now))
+        with mock.patch.dict("os.environ", {"JUDGE_LOOKBACK_DAYS": "7"}):
+            self.assertEqual(
+                module.lookback_start(now), datetime(2026, 9, 25, tzinfo=timezone.utc)
+            )
 
     def test_manual_eval_workflow_is_present(self):
         workflow = ROOT / ".github" / "workflows" / "run-langfuse-judge.yml"
