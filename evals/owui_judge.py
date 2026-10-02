@@ -4,10 +4,19 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from langfuse import Evaluation, EvaluatorInputs, Langfuse
 
+
+# Langfuse v4: filters/system.py writes one root observation "owui-chat" per
+# assistant message, with the overall input and output. The deprecated trace
+# read endpoints (GET /api/public/traces) are gone once Langfuse runs the
+# events_only write mode, so the judge reads the Observations API v2.
+ROOT_OBSERVATION_NAME = "owui-chat"
+OBSERVATION_FIELDS = "core,basic,io,metadata"
+PAGE_SIZE = 50
 
 SCORE_FIELDS = [
     ("instruction_following", "judge_instruction_following"),
@@ -68,13 +77,58 @@ def parse_judge_json(text: str) -> list[Evaluation]:
     return evaluations
 
 
-def map_trace(*, item, **kwargs) -> EvaluatorInputs:
+def parse_io(value: Any) -> Any:
+    """The Observations API v2 returns input/output as raw strings; the system
+    filter writes them as JSON objects."""
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except ValueError:
+        return value
+
+
+def map_observation(observation) -> EvaluatorInputs:
     return EvaluatorInputs(
-        input=item.input,
-        output=item.output,
+        input=parse_io(observation.input),
+        output=parse_io(observation.output),
         expected_output=None,
-        metadata=getattr(item, "metadata", None),
+        metadata=getattr(observation, "metadata", None),
     )
+
+
+def lookback_start(now: datetime | None = None) -> datetime | None:
+    """Optional JUDGE_LOOKBACK_DAYS limits the run to recent conversations."""
+    raw = os.getenv("JUDGE_LOOKBACK_DAYS", "").strip()
+    if not raw:
+        return None
+    now = now or datetime.now(timezone.utc)
+    return now - timedelta(days=float(raw))
+
+
+def iter_root_observations(
+    langfuse: Langfuse, from_start_time: datetime | None = None, page_size: int = PAGE_SIZE
+):
+    cursor = None
+    while True:
+        response = langfuse.api.observations.get_many(
+            name=ROOT_OBSERVATION_NAME,
+            is_root_observation=True,
+            fields=OBSERVATION_FIELDS,
+            from_start_time=from_start_time,
+            limit=page_size,
+            cursor=cursor,
+        )
+        yield from response.data
+        cursor = getattr(response.meta, "cursor", None)
+        if not cursor:
+            return
+
+
+def judge_score_id(name: str, observation_id: str) -> str:
+    # Deterministic id: a new run updates the previous judge score of the
+    # observation instead of adding a duplicate that would skew averages.
+    return f"judge:{name}:{observation_id}"
 
 
 def build_langfuse_client() -> Langfuse:
@@ -125,22 +179,38 @@ def build_llm_evaluator(langfuse: Langfuse, openai_client, model: str):
     return evaluate
 
 
-def run_batch(langfuse: Langfuse, evaluator) -> Any:
-    return langfuse.run_batched_evaluation(
-        scope="traces",
-        mapper=map_trace,
-        evaluators=[evaluator],
-        filter=json.dumps(
-            [
-                {
-                    "column": "tags",
-                    "type": "arrayOptions",
-                    "operator": "all of",
-                    "value": ["owui", "system"],
-                }
-            ]
-        ),
-    )
+def run_judge(langfuse: Langfuse, evaluator, observations) -> dict:
+    summary = {"items": 0, "scores": 0, "failed": 0}
+    for observation in observations:
+        summary["items"] += 1
+        inputs = map_observation(observation)
+        try:
+            evaluations = evaluator(
+                input=inputs.input,
+                output=inputs.output,
+                expected_output=None,
+                metadata=inputs.metadata,
+            )
+        except Exception as exc:
+            summary["failed"] += 1
+            print(
+                f"Evaluator failed on observation {observation.id} "
+                f"(trace {observation.trace_id}): {exc}"
+            )
+            continue
+        for evaluation in evaluations:
+            langfuse.create_score(
+                score_id=judge_score_id(evaluation.name, observation.id),
+                name=evaluation.name,
+                value=evaluation.value,
+                trace_id=observation.trace_id,
+                observation_id=observation.id,
+                data_type=evaluation.data_type,
+                comment=evaluation.comment,
+            )
+            summary["scores"] += 1
+    langfuse.flush()
+    return summary
 
 
 def main() -> None:
@@ -151,16 +221,17 @@ def main() -> None:
         openai_client,
         model=require_env("JUDGE_MODEL"),
     )
-    result = run_batch(langfuse, evaluator)
-    print(result)
-    failed_items = getattr(result, "total_items_failed", 0) or 0
-    failed_evaluations = getattr(result, "total_evaluations_failed", 0) or 0
-    if getattr(result, "completed", True) is False or failed_items or failed_evaluations:
-        print(
-            "Error: batch evaluation did not complete cleanly "
-            f"(completed={getattr(result, 'completed', None)}, "
-            f"failed_items={failed_items}, failed_evaluations={failed_evaluations})."
-        )
+    summary = run_judge(
+        langfuse, evaluator, iter_root_observations(langfuse, lookback_start())
+    )
+    print(
+        f"Judge run: {summary['items']} observations, "
+        f"{summary['scores']} scores, {summary['failed']} failures."
+    )
+    if summary["items"] == 0:
+        print(f"Warning: no '{ROOT_OBSERVATION_NAME}' root observation found.")
+    if summary["failed"]:
+        print("Error: the judge did not complete cleanly.")
         sys.exit(1)
 
 
