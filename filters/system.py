@@ -9,13 +9,14 @@ description: >
   message on every request. The only
   per-user runtime value managed here is hindsight_bankid, exposed to the
   memory prompt as {{hindsight_bankid}}.
-  Also records one Langfuse trace per assistant message with the deterministic
-  id "owui-{chat_id}-{message_id}" (Langfuse ingestion API): created at inlet
-  time (so failed requests still leave a trace with input, user and session),
-  completed at outlet time with the assistant output. The LiteLLM generation
-  joins the same trace when the OpenWebUI connection to LiteLLM sends the
-  custom header "langfuse_existing_trace_id: owui-{{CHAT_ID}}-{{MESSAGE_ID}}".
-  The langfuse_feedback action attaches its scores with the same id scheme.
+  Also records one Langfuse trace per assistant message through the Langfuse v4
+  OpenTelemetry endpoint (OTLP/HTTP JSON, x-langfuse-ingestion-version: 4).
+  The trace id is derived from the seed "owui-{chat_id}-{message_id}" with the
+  algorithm of Langfuse.create_trace_id(seed=...), so the langfuse_feedback
+  action and any SDK user can compute it. Each span is exported once, complete:
+  an "owui-chat-request" event at inlet time (failed requests still leave a
+  trace with input, user and session), then the root "owui-chat" span at outlet
+  time with the overall input and output.
   Agent gateway models (passthrough_model_prefixes, default "cptr/" for
   Open WebUI Computer) run their own agent loop and ignore Open WebUI tools,
   skills, terminals and system prompts: for them the filter keeps tracing but
@@ -23,12 +24,20 @@ description: >
   Open WebUI no longer opens one MCP session per forced server on each message.
 """
 
+import hashlib
+import json
 import logging
+import time
+from collections import OrderedDict
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 log = logging.getLogger("global_policy_filter")
+
+TRACE_NAME = "owui-chat"
+REQUEST_EVENT_NAME = "owui-chat-request"
+INFLIGHT_LIMIT = 2048
 
 PROMPT_MODULES = (
     "core",
@@ -120,6 +129,8 @@ class Filter:
         self._warned_unresolved_skill_ids = set()
         self._bg_tasks = set()
         self._clock_offset = None
+        # Inlet time per trace seed, used as the root span start at outlet time.
+        self._inflight_starts = OrderedDict()
 
     def _get_client(self):
         """Lazily build a Langfuse client. Raises clearly if unavailable."""
@@ -232,12 +243,27 @@ class Filter:
     ) -> str:
         return (await self._fetch_policy(__user__)).strip()
 
-    def _build_trace_id(self, chat_id: str, message_id: str) -> str:
-        # Deterministic id shared with the langfuse_feedback action and with
-        # LiteLLM (OpenWebUI connection header langfuse_existing_trace_id).
-        # Plain string on purpose: header templating cannot hash, and the
-        # Langfuse ingestion API accepts arbitrary string trace ids.
+    def _trace_seed(self, chat_id: str, message_id: str) -> str:
+        # Former plain trace id, kept as the seed of the OTEL ids and as the
+        # owui_trace_key metadata so traces stay searchable by chat/message.
         return f"owui-{chat_id}-{message_id}"
+
+    def _build_trace_id(self, chat_id: str, message_id: str) -> str:
+        # Same algorithm as Langfuse.create_trace_id(seed=...) in the Python
+        # SDK: 16 bytes of sha256(seed), hex. Shared with langfuse_feedback.
+        seed = self._trace_seed(chat_id, message_id)
+        return hashlib.sha256(seed.encode("utf-8")).digest()[:16].hex()
+
+    def _observation_id(self, chat_id: str, message_id: str, role: str) -> str:
+        # Same algorithm as Langfuse.create_observation_id(seed=...): 8 bytes.
+        seed = f"{self._trace_seed(chat_id, message_id)}:{role}"
+        return hashlib.sha256(seed.encode("utf-8")).digest()[:8].hex()
+
+    def _root_observation_id(self, chat_id: str, message_id: str) -> str:
+        return self._observation_id(chat_id, message_id, "root")
+
+    def _request_observation_id(self, chat_id: str, message_id: str) -> str:
+        return self._observation_id(chat_id, message_id, "request")
 
     def _metadata_value(self, body: dict, __metadata__: Optional[dict], key: str):
         if __metadata__ and __metadata__.get(key) is not None:
@@ -329,6 +355,7 @@ class Filter:
             "prompt_label": str(self.valves.prompt_label),
             "forced_tool_ids": ",".join(self._parse_forced_tool_ids()),
             "forced_skill_ids": ",".join(self._parse_forced_skill_ids()),
+            "passthrough": str(self._is_passthrough_model(body, __model__)).lower(),
         }
 
     def _trace_tags(self) -> list[str]:
@@ -344,22 +371,134 @@ class Filter:
             value = getattr(__user__, "email", "") or getattr(__user__, "id", "")
         return str(value).strip()
 
-    def _ingestion_event(self, event_type: str, body: dict) -> dict:
-        import uuid
+    def _resolve_trace_ids(
+        self, body: dict, __metadata__: Optional[dict], __chat_id__, __message_id__
+    ) -> Optional[tuple]:
+        """Return (chat_id, message_id) for traceable requests, else None."""
+        chat_id = str(
+            __chat_id__ or self._metadata_value(body, __metadata__, "chat_id") or ""
+        ).strip()
+        message_id = str(
+            __message_id__
+            or self._metadata_value(body, __metadata__, "message_id")
+            or ""
+        ).strip()
+        if not chat_id or not message_id:
+            return None
+        # Temporary chats (chat_id "local:<socket>") are not persisted by
+        # OpenWebUI; honor that and do not trace them either.
+        if chat_id.startswith("local:"):
+            return None
+        return chat_id, message_id
 
-        # Timestamps are stamped in _post_ingestion after clock calibration.
-        return {
-            "id": str(uuid.uuid4()),
-            "type": event_type,
-            "body": body,
+    def _trace_attributes(
+        self,
+        body: dict,
+        __user__: Optional[dict],
+        __metadata__: Optional[dict],
+        __model__,
+        chat_id: str,
+        message_id: str,
+    ) -> dict:
+        """Trace-wide attributes, copied on every span (Langfuse v4 queries
+        observations directly, root-only attributes are not filterable)."""
+        attributes = {
+            "langfuse.trace.name": TRACE_NAME,
+            "langfuse.session.id": chat_id,
+            "langfuse.trace.tags": self._trace_tags(),
         }
+        user = self._user_identifier(__user__)
+        if user:
+            attributes["langfuse.user.id"] = user
+        metadata = {
+            **self._trace_metadata(body, __metadata__, __model__),
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "owui_trace_key": self._trace_seed(chat_id, message_id),
+        }
+        for key, value in metadata.items():
+            attributes[f"langfuse.trace.metadata.{key}"] = value
+        return attributes
+
+    def _remember_start(self, seed: str, start_ns: int) -> None:
+        self._inflight_starts[seed] = start_ns
+        self._inflight_starts.move_to_end(seed)
+        while len(self._inflight_starts) > INFLIGHT_LIMIT:
+            self._inflight_starts.popitem(last=False)
+
+    def _pop_start(self, seed: str) -> Optional[int]:
+        return self._inflight_starts.pop(seed, None)
+
+    def _otlp_value(self, value) -> dict:
+        if isinstance(value, bool):
+            return {"boolValue": value}
+        if isinstance(value, int):
+            return {"intValue": str(value)}
+        if isinstance(value, float):
+            return {"doubleValue": value}
+        if isinstance(value, (list, tuple)):
+            return {"arrayValue": {"values": [self._otlp_value(v) for v in value]}}
+        return {"stringValue": str(value)}
+
+    def _otlp_attributes(self, attributes: dict) -> list:
+        return [
+            {"key": key, "value": self._otlp_value(value)}
+            for key, value in attributes.items()
+            if value is not None and value != ""
+        ]
+
+    def _otlp_span(
+        self,
+        *,
+        trace_id: str,
+        span_id: str,
+        parent_span_id: Optional[str],
+        name: str,
+        start_ns: int,
+        end_ns: int,
+        attributes: dict,
+    ) -> dict:
+        span = {
+            "traceId": trace_id,
+            "spanId": span_id,
+            "name": name,
+            "kind": 1,  # SPAN_KIND_INTERNAL
+            "startTimeUnixNano": str(start_ns),
+            "endTimeUnixNano": str(end_ns),
+            "attributes": self._otlp_attributes(attributes),
+            "status": {"code": 1},  # STATUS_CODE_OK
+        }
+        if parent_span_id:
+            span["parentSpanId"] = parent_span_id
+        return span
+
+    def _otlp_payload(self, spans: list) -> dict:
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {
+                        "attributes": self._otlp_attributes(
+                            {"service.name": "openwebui"}
+                        )
+                    },
+                    "scopeSpans": [
+                        {
+                            "scope": {"name": "openwebuitools.system"},
+                            "spans": spans,
+                        }
+                    ],
+                }
+            ]
+        }
+
+    def _json_attribute(self, value) -> str:
+        return json.dumps(value, ensure_ascii=False)
 
     async def _ensure_clock_offset(self, client) -> None:
         """Calibrate against the Langfuse server clock once per process.
 
-        Langfuse uses the client-provided event timestamps as trace/observation
-        times; a skewed container clock breaks the trace/observation time join
-        and misorders traces relative to LiteLLM generations.
+        Langfuse uses the client-provided span timestamps as observation times;
+        a skewed container clock misorders traces and breaks time filters.
         """
         if self._clock_offset is not None:
             return
@@ -383,51 +522,56 @@ class Filter:
             log.warning("Langfuse clock calibration failed: %s", exc)
             self._clock_offset = 0.0
 
-    def _corrected_now_iso(self) -> str:
-        from datetime import datetime, timedelta, timezone
-
+    def _shift_span_times(self, spans: list) -> None:
+        # Only correct a real skew: the server Date header has a 1 s resolution.
         offset = self._clock_offset or 0.0
-        return (datetime.now(timezone.utc) + timedelta(seconds=offset)).isoformat()
+        if abs(offset) <= 30:
+            return
+        shift = int(offset * 1_000_000_000)
+        for span in spans:
+            for key in ("startTimeUnixNano", "endTimeUnixNano"):
+                span[key] = str(int(span[key]) + shift)
 
-    async def _post_ingestion(self, events: list) -> None:
+    async def _post_otlp(self, spans: list) -> None:
         import httpx
 
         if not (self.valves.langfuse_public_key and self.valves.langfuse_secret_key):
             raise RuntimeError("Langfuse public and secret keys are required for tracing.")
 
-        url = f"{self.valves.langfuse_host.rstrip('/')}/api/public/ingestion"
+        url = f"{self.valves.langfuse_host.rstrip('/')}/api/public/otel/v1/traces"
         auth = (self.valves.langfuse_public_key, self.valves.langfuse_secret_key)
         async with httpx.AsyncClient(timeout=10.0) as client:
             await self._ensure_clock_offset(client)
-            now = self._corrected_now_iso()
-            # Stamp everything explicitly: Langfuse stores client timestamps
-            # verbatim, but fills missing ones server-side in the server's
-            # local timezone mislabeled as UTC, which skews trace times and
-            # breaks the trace/observation join.
-            for event in events:
-                event.setdefault("timestamp", now)
-                if event.get("type") == "trace-create":
-                    event["body"].setdefault("timestamp", now)
-                elif event.get("type") == "event-create":
-                    event["body"].setdefault("startTime", now)
-            response = await client.post(url, json={"batch": events}, auth=auth)
-        if response.status_code not in (200, 201, 207):
-            raise RuntimeError(
-                f"Langfuse ingestion failed ({response.status_code}): {response.text[:500]}"
+            self._shift_span_times(spans)
+            response = await client.post(
+                url,
+                json=self._otlp_payload(spans),
+                auth=auth,
+                headers={"x-langfuse-ingestion-version": "4"},
             )
-        errors = (response.json() or {}).get("errors") or []
-        if errors:
-            raise RuntimeError(f"Langfuse ingestion rejected events: {errors}")
+        if response.status_code not in (200, 202):
+            raise RuntimeError(
+                f"Langfuse OTLP export failed ({response.status_code}): {response.text[:500]}"
+            )
+        try:
+            partial = (response.json() or {}).get("partialSuccess") or {}
+        except ValueError:
+            partial = {}
+        rejected = int(partial.get("rejectedSpans") or 0)
+        if rejected:
+            raise RuntimeError(
+                f"Langfuse rejected {rejected} span(s): {partial.get('errorMessage', '')}"
+            )
 
-    def _spawn_ingestion(self, events: list) -> None:
+    def _spawn_export(self, spans: list) -> None:
         """Fire-and-forget so tracing never delays or breaks a chat request."""
         import asyncio
 
         async def _run():
             try:
-                await self._post_ingestion(events)
+                await self._post_otlp(spans)
             except Exception as exc:
-                log.error("Langfuse trace ingestion failed: %s", exc)
+                log.error("Langfuse trace export failed: %s", exc)
 
         task = asyncio.create_task(_run())
         self._bg_tasks.add(task)
@@ -442,39 +586,36 @@ class Filter:
         __message_id__,
         __model__,
     ) -> None:
-        """Create the trace at request time so failed messages are traced too."""
-        chat_id = str(
-            __chat_id__ or self._metadata_value(body, __metadata__, "chat_id") or ""
-        ).strip()
-        message_id = str(
-            __message_id__
-            or self._metadata_value(body, __metadata__, "message_id")
-            or ""
-        ).strip()
-        if not chat_id or not message_id:
+        """Export the request event at inlet time so failed messages are traced."""
+        ids = self._resolve_trace_ids(body, __metadata__, __chat_id__, __message_id__)
+        if ids is None:
             return
-        # Temporary chats (chat_id "local:<socket>") are not persisted by
-        # OpenWebUI; honor that and do not trace them either.
-        if chat_id.startswith("local:"):
-            return
+        chat_id, message_id = ids
+        start_ns = time.time_ns()
+        self._remember_start(self._trace_seed(chat_id, message_id), start_ns)
 
-        trace_id = self._build_trace_id(chat_id, message_id)
-        event = self._ingestion_event(
-            "trace-create",
-            {
-                "id": trace_id,
-                "name": "owui-chat",
-                "userId": self._user_identifier(__user__),
-                "sessionId": chat_id,
-                "tags": self._trace_tags(),
-                "input": {"last_user_message": self._last_message_content(body, "user")},
-                "metadata": {
-                    **self._trace_metadata(body, __metadata__, __model__),
-                    "status": "pending",
-                },
-            },
+        attributes = {
+            **self._trace_attributes(
+                body, __user__, __metadata__, __model__, chat_id, message_id
+            ),
+            "langfuse.observation.type": "event",
+            "langfuse.observation.input": self._json_attribute(
+                {"last_user_message": self._last_message_content(body, "user")}
+            ),
+            "langfuse.observation.metadata.status": "pending",
+        }
+        span = self._otlp_span(
+            trace_id=self._build_trace_id(chat_id, message_id),
+            span_id=self._request_observation_id(chat_id, message_id),
+            # The root span is exported at outlet time with a deterministic id;
+            # Langfuse attaches this event to it once it arrives.
+            parent_span_id=self._root_observation_id(chat_id, message_id),
+            name=REQUEST_EVENT_NAME,
+            start_ns=start_ns,
+            end_ns=start_ns,
+            attributes=attributes,
         )
-        self._spawn_ingestion([event])
+        self._spawn_export([span])
 
     def _dedupe_ids(self, ids) -> list[str]:
         result = []
@@ -763,42 +904,39 @@ class Filter:
             return None
 
         try:
-            metadata = self._trace_metadata(body, __metadata__, __model__)
-            trace_id = self._build_trace_id(chat_id, message_id)
-            assistant_message = self._last_message_content(body, "assistant")
-            events = [
-                # Complete the trace created at inlet time (upsert by id).
-                # userId/sessionId/tags are repeated so the trace stays whole
-                # even if the inlet event was lost.
-                self._ingestion_event(
-                    "trace-create",
-                    {
-                        "id": trace_id,
-                        "name": "owui-chat",
-                        "userId": self._user_identifier(__user__),
-                        "sessionId": chat_id,
-                        "tags": self._trace_tags(),
-                        "output": {"assistant_message": assistant_message},
-                        "metadata": {**metadata, "status": "completed"},
-                    },
+            end_ns = time.time_ns()
+            start_ns = self._pop_start(self._trace_seed(chat_id, message_id)) or end_ns
+            overall_input = self._json_attribute(
+                {"last_user_message": self._last_message_content(body, "user")}
+            )
+            overall_output = self._json_attribute(
+                {"assistant_message": self._last_message_content(body, "assistant")}
+            )
+            attributes = {
+                **self._trace_attributes(
+                    body, __user__, __metadata__, __model__, chat_id, message_id
                 ),
-                self._ingestion_event(
-                    "event-create",
-                    {
-                        "id": f"owui-evt-{chat_id}-{message_id}",
-                        "traceId": trace_id,
-                        "name": "owui-chat-response",
-                        "input": {
-                            "last_user_message": self._last_message_content(
-                                body, "user"
-                            )
-                        },
-                        "output": {"assistant_message": assistant_message},
-                        "metadata": metadata,
-                    },
-                ),
-            ]
-            await self._post_ingestion(events)
+                "langfuse.observation.type": "span",
+                # Langfuse v4: the overall request and response live on the root
+                # observation.
+                "langfuse.observation.input": overall_input,
+                "langfuse.observation.output": overall_output,
+                "langfuse.observation.metadata.status": "completed",
+                # Deprecated in v4, kept for trace-level evaluators such as
+                # evals/owui_judge.py (run_batched_evaluation scope="traces").
+                "langfuse.trace.input": overall_input,
+                "langfuse.trace.output": overall_output,
+            }
+            span = self._otlp_span(
+                trace_id=self._build_trace_id(chat_id, message_id),
+                span_id=self._root_observation_id(chat_id, message_id),
+                parent_span_id=None,
+                name=TRACE_NAME,
+                start_ns=start_ns,
+                end_ns=end_ns,
+                attributes=attributes,
+            )
+            self._spawn_export([span])
         except Exception as exc:
             log.error("Langfuse trace recording failed: %s", exc)
 

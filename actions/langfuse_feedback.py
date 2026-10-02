@@ -3,12 +3,15 @@ title: Langfuse Feedback
 author: geoff
 description: >
   Send explicit OpenWebUI message feedback to Langfuse scores via the public
-  scores API. Scores attach to the deterministic trace id
-  "owui-{chat_id}-{message_id}" shared with the system filter.
+  scores API. Scores attach to the trace and to the root observation that the
+  system filter exports for the message. Both ids are derived from the seed
+  "owui-{chat_id}-{message_id}" with the Langfuse SDK algorithms
+  (create_trace_id / create_observation_id).
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Optional
 
@@ -83,9 +86,20 @@ class Action:
                 return body.get(alias)
         return body.get(key)
 
-    def _build_trace_id(self, chat_id: str, message_id: str) -> str:
-        # Must stay identical to Filter._build_trace_id in filters/system.py.
+    def _trace_seed(self, chat_id: str, message_id: str) -> str:
         return f"owui-{chat_id}-{message_id}"
+
+    def _build_trace_id(self, chat_id: str, message_id: str) -> str:
+        # Must stay identical to Filter._build_trace_id in filters/system.py
+        # (Langfuse.create_trace_id(seed=...)).
+        seed = self._trace_seed(chat_id, message_id)
+        return hashlib.sha256(seed.encode("utf-8")).digest()[:16].hex()
+
+    def _root_observation_id(self, chat_id: str, message_id: str) -> str:
+        # Must stay identical to Filter._root_observation_id in filters/system.py
+        # (Langfuse.create_observation_id(seed=...)).
+        seed = f"{self._trace_seed(chat_id, message_id)}:root"
+        return hashlib.sha256(seed.encode("utf-8")).digest()[:8].hex()
 
     def _user_id(self, __user__: Optional[dict]) -> str:
         if not __user__:
@@ -132,6 +146,7 @@ class Action:
         *,
         score_id: str,
         trace_id: str,
+        observation_id: str = "",
         name: str,
         value,
         data_type: str,
@@ -151,6 +166,8 @@ class Action:
             "dataType": data_type,
             "metadata": metadata,
         }
+        if observation_id:
+            payload["observationId"] = observation_id
         if comment:
             payload["comment"] = comment
 
@@ -204,6 +221,7 @@ class Action:
 
         user_id = self._user_id(__user__)
         trace_id = self._build_trace_id(chat_id, message_id)
+        observation_id = self._root_observation_id(chat_id, message_id)
         comment = await self._collect_comment(feedback_type, __event_call__)
         feedback_value = 1.0 if feedback_type == "positive" else 0.0
         metadata = {
@@ -219,6 +237,7 @@ class Action:
                     trace_id, user_id, "owui_user_feedback", feedback_type
                 ),
                 trace_id=trace_id,
+                observation_id=observation_id,
                 name="owui_user_feedback",
                 value=feedback_value,
                 data_type="NUMERIC",
@@ -230,6 +249,7 @@ class Action:
                     trace_id, user_id, "owui_feedback_category", feedback_type
                 ),
                 trace_id=trace_id,
+                observation_id=observation_id,
                 name="owui_feedback_category",
                 value=feedback_type,
                 data_type="CATEGORICAL",
