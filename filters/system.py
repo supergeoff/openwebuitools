@@ -16,6 +16,11 @@ description: >
   joins the same trace when the OpenWebUI connection to LiteLLM sends the
   custom header "langfuse_existing_trace_id: owui-{{CHAT_ID}}-{{MESSAGE_ID}}".
   The langfuse_feedback action attaches its scores with the same id scheme.
+  Agent gateway models (passthrough_model_prefixes, default "cptr/" for
+  Open WebUI Computer) run their own agent loop and ignore Open WebUI tools,
+  skills, terminals and system prompts: for them the filter keeps tracing but
+  skips prompt injection and strips tool_ids, skill_ids and terminal_id, so
+  Open WebUI no longer opens one MCP session per forced server on each message.
 """
 
 import logging
@@ -88,6 +93,16 @@ class Filter:
             default="",
             description=(
                 "Comma-separated workspace skill IDs to force-enable on every request."
+            ),
+        )
+        passthrough_model_prefixes: str = Field(
+            default="cptr/",
+            description=(
+                "Comma-separated model id prefixes of agent gateways (Open WebUI "
+                "Computer: cptr/) that ignore Open WebUI tools and system prompts. "
+                "For these models the filter only traces: no prompt injection, "
+                "no forced tools or skills, and tool_ids, skill_ids and "
+                "terminal_id are removed from the request."
             ),
         )
 
@@ -269,6 +284,35 @@ class Filter:
         if isinstance(__model__, dict):
             return str(__model__.get("id", "") or "")
         return str(getattr(__model__, "id", "") or "") if __model__ else ""
+
+    def _model_ids_for_matching(self, body: dict, __model__=None) -> list[str]:
+        """Model id plus the base model id of a workspace model built on it."""
+        ids = [self._model_id(body, __model__)]
+        if isinstance(__model__, dict):
+            ids.append(str(__model__.get("id", "") or ""))
+            info = __model__.get("info") or {}
+            if isinstance(info, dict):
+                ids.append(str(info.get("base_model_id", "") or ""))
+        return self._dedupe_ids(ids)
+
+    def _parse_passthrough_prefixes(self) -> list[str]:
+        raw = str(self.valves.passthrough_model_prefixes or "")
+        return self._dedupe_ids(raw.replace("\n", ",").split(","))
+
+    def _is_passthrough_model(self, body: dict, __model__=None) -> bool:
+        prefixes = self._parse_passthrough_prefixes()
+        if not prefixes:
+            return False
+        return any(
+            model_id.startswith(prefix)
+            for model_id in self._model_ids_for_matching(body, __model__)
+            for prefix in prefixes
+        )
+
+    def _strip_owui_tooling(self, body: dict) -> None:
+        """Agent gateways ignore OWUI tools: do not make OWUI resolve them."""
+        for key in ("tool_ids", "skill_ids", "terminal_id"):
+            body.pop(key, None)
 
     def _trace_metadata(
         self,
@@ -567,7 +611,15 @@ class Filter:
             user_id = self._get_user_id(__user__)
             accessible_skill_ids = set(forced_skill_ids)
             if user_id:
-                accessible_skills = await Skills.get_skills_by_user_id(user_id, "read")
+                if hasattr(Skills, "get_skills"):
+                    # Open WebUI >= 0.11: get_skills filters by read access.
+                    accessible_skills = await Skills.get_skills(
+                        user_id=user_id, ids=forced_skill_ids
+                    )
+                else:
+                    accessible_skills = await Skills.get_skills_by_user_id(
+                        user_id, "read"
+                    )
                 accessible_skill_ids = {
                     str(skill.id).strip()
                     for skill in accessible_skills or []
@@ -656,6 +708,10 @@ class Filter:
                 )
             except Exception as exc:
                 log.error("Langfuse request tracing failed: %s", exc)
+
+        if self._is_passthrough_model(body, __model__):
+            self._strip_owui_tooling(body)
+            return body
 
         await self._force_tool_ids(body, __request__)
         await self._force_skill_ids(body, __user__)
