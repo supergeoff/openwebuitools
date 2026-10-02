@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import importlib.util
 import inspect
 import sys
@@ -40,6 +41,16 @@ def run_action(action, body, **kwargs):
     return result
 
 
+def sdk_trace_id(seed):
+    # Langfuse.create_trace_id(seed=...) in the Python SDK v4.
+    return hashlib.sha256(seed.encode("utf-8")).digest()[:16].hex()
+
+
+def sdk_observation_id(seed):
+    # Langfuse.create_observation_id(seed=...) in the Python SDK v4.
+    return hashlib.sha256(seed.encode("utf-8")).digest()[:8].hex()
+
+
 def capture_scores(action, scores):
     async def _post_score(**kwargs):
         scores.append(kwargs)
@@ -54,8 +65,57 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
 
         self.assertEqual(
             action._build_trace_id("chat-1", "msg-2"),
-            "owui-chat-1-msg-2",
+            sdk_trace_id("owui-chat-1-msg-2"),
         )
+        self.assertEqual(
+            action._root_observation_id("chat-1", "msg-2"),
+            sdk_observation_id("owui-chat-1-msg-2:root"),
+        )
+
+    def test_ids_are_identical_to_the_system_filter_ids(self):
+        from tests.test_system_filter import load_filter_module
+
+        action = load_action_module().Action()
+        filter_ = load_filter_module().Filter()
+
+        self.assertEqual(
+            action._build_trace_id("chat-1", "msg-2"),
+            filter_._build_trace_id("chat-1", "msg-2"),
+        )
+        self.assertEqual(
+            action._root_observation_id("chat-1", "msg-2"),
+            filter_._root_observation_id("chat-1", "msg-2"),
+        )
+
+    def test_post_score_attaches_score_to_trace_and_root_observation(self):
+        from tests.test_system_filter import fake_httpx
+
+        action = load_action_module().Action()
+        action.valves.langfuse_public_key = "pk-test"
+        action.valves.langfuse_secret_key = "sk-test"
+        calls = []
+
+        with fake_httpx(calls, status_code=200, payload={"id": "score-1"}):
+            asyncio.run(
+                action._post_score(
+                    score_id="score-1",
+                    trace_id="a" * 32,
+                    observation_id="b" * 16,
+                    name="owui_user_feedback",
+                    value=1.0,
+                    data_type="NUMERIC",
+                    comment="",
+                    metadata={},
+                )
+            )
+
+        payload = calls[0]["json"]
+        self.assertEqual(
+            calls[0]["url"], "https://langfuse.supergeoff.top/api/public/scores"
+        )
+        self.assertEqual(payload["traceId"], "a" * 32)
+        self.assertEqual(payload["observationId"], "b" * 16)
+        self.assertNotIn("comment", payload)
 
     def test_positive_feedback_creates_numeric_and_category_scores(self):
         module = load_action_module()
@@ -81,15 +141,19 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(len(scores), 2)
-        self.assertEqual(scores[0]["trace_id"], "owui-chat-1-msg-1")
+        trace_id = sdk_trace_id("owui-chat-1-msg-1")
+        self.assertEqual(scores[0]["trace_id"], trace_id)
+        self.assertEqual(
+            scores[0]["observation_id"], sdk_observation_id("owui-chat-1-msg-1:root")
+        )
         self.assertEqual(scores[0]["name"], "owui_user_feedback")
         self.assertEqual(scores[0]["value"], 1.0)
         self.assertEqual(scores[0]["data_type"], "NUMERIC")
         self.assertEqual(
             scores[0]["score_id"],
-            "owui:owui_user_feedback:positive:owui-chat-1-msg-1:user-1",
+            f"owui:owui_user_feedback:positive:{trace_id}:user-1",
         )
-        self.assertEqual(scores[1]["trace_id"], "owui-chat-1-msg-1")
+        self.assertEqual(scores[1]["trace_id"], trace_id)
         self.assertEqual(scores[1]["name"], "owui_feedback_category")
         self.assertEqual(scores[1]["value"], "positive")
         self.assertEqual(scores[1]["data_type"], "CATEGORICAL")
@@ -120,7 +184,9 @@ class LangfuseFeedbackActionTest(unittest.TestCase):
             __event_emitter__=event_emitter,
         )
 
-        self.assertEqual(scores[0]["trace_id"], "owui-chat-1-msg-from-action-payload")
+        self.assertEqual(
+            scores[0]["trace_id"], sdk_trace_id("owui-chat-1-msg-from-action-payload")
+        )
         self.assertEqual(scores[0]["metadata"]["message_id"], "msg-from-action-payload")
         self.assertEqual(events[-1]["data"]["type"], "success")
 

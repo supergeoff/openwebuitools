@@ -1,6 +1,9 @@
 import importlib.util
 import asyncio
+import contextlib
+import hashlib
 import inspect
+import json
 import logging
 import sys
 import types
@@ -46,6 +49,62 @@ def run_outlet(filter_, body, **kwargs):
     if inspect.isawaitable(result):
         return asyncio.run(result)
     return result
+
+
+def span_attributes(span):
+    """Decode OTLP JSON attributes back to plain Python values."""
+
+    def decode(value):
+        if "arrayValue" in value:
+            return [decode(item) for item in value["arrayValue"].get("values", [])]
+        if "intValue" in value:
+            return int(value["intValue"])
+        for key in ("stringValue", "boolValue", "doubleValue"):
+            if key in value:
+                return value[key]
+        raise AssertionError(f"unexpected OTLP value {value}")
+
+    return {item["key"]: decode(item["value"]) for item in span["attributes"]}
+
+
+@contextlib.contextmanager
+def fake_httpx(calls, status_code=200, payload=None):
+    """Stand-in for httpx.AsyncClient that records POST requests."""
+
+    class Response:
+        def __init__(self):
+            self.status_code = status_code
+            self.text = json.dumps(payload or {})
+            self.headers = {}
+
+        def json(self):
+            return payload or {}
+
+    class AsyncClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None, auth=None, headers=None):
+            calls.append({"url": url, "json": json, "auth": auth, "headers": headers})
+            return Response()
+
+    module = types.ModuleType("httpx")
+    module.AsyncClient = AsyncClient
+    original = sys.modules.get("httpx")
+    sys.modules["httpx"] = module
+    try:
+        yield
+    finally:
+        if original is None:
+            sys.modules.pop("httpx", None)
+        else:
+            sys.modules["httpx"] = original
 
 
 class SystemFilterTest(unittest.TestCase):
@@ -476,21 +535,28 @@ class SystemFilterTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "memory.*empty"):
             run_inlet(filter_, {"messages": [{"role": "user", "content": "Hello"}]})
 
-    def test_trace_id_is_deterministic_for_chat_and_message(self):
+    def test_trace_and_observation_ids_follow_langfuse_sdk_algorithms(self):
         module = load_filter_module()
         filter_ = module.Filter()
 
+        seed = "owui-chat-1-message-2"
         self.assertEqual(
             filter_._build_trace_id("chat-1", "message-2"),
-            "owui-chat-1-message-2",
+            hashlib.sha256(seed.encode("utf-8")).digest()[:16].hex(),
         )
+        self.assertEqual(
+            filter_._root_observation_id("chat-1", "message-2"),
+            hashlib.sha256(f"{seed}:root".encode("utf-8")).digest()[:8].hex(),
+        )
+        self.assertEqual(len(filter_._build_trace_id("chat-1", "message-2")), 32)
+        self.assertEqual(len(filter_._request_observation_id("chat-1", "message-2")), 16)
 
-    def test_inlet_creates_trace_with_user_session_and_input(self):
+    def test_inlet_exports_request_event_with_trace_attributes(self):
         module = load_filter_module()
         filter_ = module.Filter()
         filter_.valves.enabled = False
         captured = []
-        filter_._spawn_ingestion = lambda events: captured.extend(events)
+        filter_._spawn_export = lambda spans: captured.extend(spans)
 
         run_inlet(
             filter_,
@@ -503,24 +569,37 @@ class SystemFilterTest(unittest.TestCase):
         )
 
         self.assertEqual(len(captured), 1)
-        event = captured[0]
-        self.assertEqual(event["type"], "trace-create")
-        body = event["body"]
-        self.assertEqual(body["id"], "owui-chat-1-msg-1")
-        self.assertEqual(body["name"], "owui-chat")
-        self.assertEqual(body["userId"], "geoff@example.com")
-        self.assertEqual(body["sessionId"], "chat-1")
-        self.assertEqual(body["tags"], ["owui", "system"])
-        self.assertEqual(body["input"], {"last_user_message": "Question"})
-        self.assertEqual(body["metadata"]["status"], "pending")
-        self.assertEqual(body["metadata"]["model"], "gpt-test")
+        span = captured[0]
+        self.assertEqual(span["name"], "owui-chat-request")
+        self.assertEqual(span["traceId"], filter_._build_trace_id("chat-1", "msg-1"))
+        self.assertEqual(span["spanId"], filter_._request_observation_id("chat-1", "msg-1"))
+        self.assertEqual(
+            span["parentSpanId"], filter_._root_observation_id("chat-1", "msg-1")
+        )
+        self.assertEqual(span["startTimeUnixNano"], span["endTimeUnixNano"])
+        attributes = span_attributes(span)
+        self.assertEqual(attributes["langfuse.trace.name"], "owui-chat")
+        self.assertEqual(attributes["langfuse.user.id"], "geoff@example.com")
+        self.assertEqual(attributes["langfuse.session.id"], "chat-1")
+        self.assertEqual(attributes["langfuse.trace.tags"], ["owui", "system"])
+        self.assertEqual(attributes["langfuse.observation.type"], "event")
+        self.assertEqual(
+            json.loads(attributes["langfuse.observation.input"]),
+            {"last_user_message": "Question"},
+        )
+        self.assertEqual(attributes["langfuse.observation.metadata.status"], "pending")
+        self.assertEqual(attributes["langfuse.trace.metadata.model"], "gpt-test")
+        self.assertEqual(
+            attributes["langfuse.trace.metadata.owui_trace_key"], "owui-chat-1-msg-1"
+        )
+        self.assertNotIn("langfuse.trace.input", attributes)
 
     def test_inlet_skips_tracing_for_temporary_chats(self):
         module = load_filter_module()
         filter_ = module.Filter()
         filter_.valves.enabled = False
         captured = []
-        filter_._spawn_ingestion = lambda events: captured.extend(events)
+        filter_._spawn_export = lambda spans: captured.extend(spans)
 
         run_inlet(
             filter_,
@@ -536,7 +615,7 @@ class SystemFilterTest(unittest.TestCase):
         filter_ = module.Filter()
         filter_.valves.enabled = False
         captured = []
-        filter_._spawn_ingestion = lambda events: captured.extend(events)
+        filter_._spawn_export = lambda spans: captured.extend(spans)
 
         run_inlet(
             filter_,
@@ -546,18 +625,23 @@ class SystemFilterTest(unittest.TestCase):
 
         self.assertEqual(captured, [])
 
-    def test_outlet_records_langfuse_trace_with_prompt_metadata(self):
+    def test_outlet_exports_complete_root_span_with_prompt_metadata(self):
         module = load_filter_module()
         filter_ = module.Filter()
+        filter_.valves.enabled = False
         filter_.valves.forced_tool_ids = "server:mcp:memory"
         filter_.valves.forced_skill_ids = "brainstorming"
         captured = []
+        filter_._spawn_export = lambda spans: captured.extend(spans)
+        metadata = {"chat_id": "chat-1", "message_id": "msg-1"}
+        user = {"id": "user-1", "email": "geoff@example.com"}
 
-        async def capture(events):
-            captured.extend(events)
-
-        filter_._post_ingestion = capture
-
+        run_inlet(
+            filter_,
+            {"model": "gpt-test", "messages": [{"role": "user", "content": "Question"}]},
+            __user__=user,
+            __metadata__=metadata,
+        )
         run_outlet(
             filter_,
             {
@@ -567,44 +651,51 @@ class SystemFilterTest(unittest.TestCase):
                     {"role": "assistant", "content": "Answer"},
                 ],
             },
-            __user__={"id": "user-1", "email": "geoff@example.com"},
-            __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
+            __user__=user,
+            __metadata__=metadata,
         )
 
         self.assertEqual(len(captured), 2)
-        trace_event, observation_event = captured
+        request_event, root = captured
+        self.assertEqual(root["name"], "owui-chat")
+        self.assertNotIn("parentSpanId", root)
+        self.assertEqual(root["traceId"], request_event["traceId"])
+        self.assertEqual(root["spanId"], request_event["parentSpanId"])
+        self.assertEqual(root["startTimeUnixNano"], request_event["startTimeUnixNano"])
+        self.assertGreaterEqual(
+            int(root["endTimeUnixNano"]), int(root["startTimeUnixNano"])
+        )
 
-        self.assertEqual(trace_event["type"], "trace-create")
-        trace = trace_event["body"]
-        self.assertEqual(trace["id"], "owui-chat-1-msg-1")
-        self.assertEqual(trace["name"], "owui-chat")
-        self.assertEqual(trace["userId"], "geoff@example.com")
-        self.assertEqual(trace["sessionId"], "chat-1")
-        self.assertEqual(trace["tags"], ["owui", "system"])
-        self.assertEqual(trace["output"], {"assistant_message": "Answer"})
-        self.assertEqual(trace["metadata"]["status"], "completed")
-        self.assertNotIn("prompt_modules", trace["metadata"])
-        self.assertEqual(trace["metadata"]["forced_tool_ids"], "server:mcp:memory")
-        self.assertEqual(trace["metadata"]["forced_skill_ids"], "brainstorming")
-        self.assertEqual(trace["metadata"]["model"], "gpt-test")
-
-        self.assertEqual(observation_event["type"], "event-create")
-        observation = observation_event["body"]
-        self.assertEqual(observation["id"], "owui-evt-chat-1-msg-1")
-        self.assertEqual(observation["traceId"], "owui-chat-1-msg-1")
-        self.assertEqual(observation["name"], "owui-chat-response")
-        self.assertEqual(observation["input"], {"last_user_message": "Question"})
-        self.assertEqual(observation["output"], {"assistant_message": "Answer"})
+        attributes = span_attributes(root)
+        self.assertEqual(attributes["langfuse.observation.type"], "span")
+        self.assertEqual(
+            json.loads(attributes["langfuse.observation.input"]),
+            {"last_user_message": "Question"},
+        )
+        self.assertEqual(
+            json.loads(attributes["langfuse.observation.output"]),
+            {"assistant_message": "Answer"},
+        )
+        self.assertEqual(
+            attributes["langfuse.trace.output"], attributes["langfuse.observation.output"]
+        )
+        self.assertEqual(attributes["langfuse.observation.metadata.status"], "completed")
+        self.assertEqual(attributes["langfuse.user.id"], "geoff@example.com")
+        self.assertEqual(attributes["langfuse.session.id"], "chat-1")
+        self.assertEqual(
+            attributes["langfuse.trace.metadata.forced_tool_ids"], "server:mcp:memory"
+        )
+        self.assertEqual(
+            attributes["langfuse.trace.metadata.forced_skill_ids"], "brainstorming"
+        )
+        self.assertEqual(attributes["langfuse.trace.metadata.passthrough"], "false")
+        self.assertEqual(filter_._inflight_starts, {})
 
     def test_outlet_reads_assistant_text_from_structured_output_items(self):
         module = load_filter_module()
         filter_ = module.Filter()
         captured = []
-
-        async def capture(events):
-            captured.extend(events)
-
-        filter_._post_ingestion = capture
+        filter_._spawn_export = lambda spans: captured.extend(spans)
 
         run_outlet(
             filter_,
@@ -631,8 +722,75 @@ class SystemFilterTest(unittest.TestCase):
             __metadata__={"chat_id": "chat-1", "message_id": "msg-1"},
         )
 
-        trace = captured[0]["body"]
-        self.assertEqual(trace["output"], {"assistant_message": "Answer from items"})
+        attributes = span_attributes(captured[0])
+        self.assertEqual(
+            json.loads(attributes["langfuse.observation.output"]),
+            {"assistant_message": "Answer from items"},
+        )
+
+    def test_post_otlp_sends_v4_ingestion_payload(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.langfuse_public_key = "pk-test"
+        filter_.valves.langfuse_secret_key = "sk-test"
+        filter_._clock_offset = 0.0
+        calls = []
+        span = filter_._otlp_span(
+            trace_id="a" * 32,
+            span_id="b" * 16,
+            parent_span_id=None,
+            name="owui-chat",
+            start_ns=1,
+            end_ns=2,
+            attributes={"langfuse.trace.tags": ["owui"], "count": 3, "flag": True},
+        )
+
+        with fake_httpx(calls, status_code=200, payload={"partialSuccess": {}}):
+            asyncio.run(filter_._post_otlp([span]))
+
+        self.assertEqual(len(calls), 1)
+        call = calls[0]
+        self.assertEqual(
+            call["url"], "https://langfuse.supergeoff.top/api/public/otel/v1/traces"
+        )
+        self.assertEqual(call["headers"], {"x-langfuse-ingestion-version": "4"})
+        self.assertEqual(call["auth"], ("pk-test", "sk-test"))
+        scope_spans = call["json"]["resourceSpans"][0]["scopeSpans"][0]
+        self.assertEqual(scope_spans["spans"], [span])
+        self.assertEqual(
+            span["attributes"],
+            [
+                {
+                    "key": "langfuse.trace.tags",
+                    "value": {"arrayValue": {"values": [{"stringValue": "owui"}]}},
+                },
+                {"key": "count", "value": {"intValue": "3"}},
+                {"key": "flag", "value": {"boolValue": True}},
+            ],
+        )
+
+    def test_post_otlp_raises_when_langfuse_rejects_spans(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_.valves.langfuse_public_key = "pk-test"
+        filter_.valves.langfuse_secret_key = "sk-test"
+        filter_._clock_offset = 0.0
+        payload = {"partialSuccess": {"rejectedSpans": 1, "errorMessage": "bad span"}}
+
+        with fake_httpx([], status_code=200, payload=payload):
+            with self.assertRaisesRegex(RuntimeError, "rejected 1 span.*bad span"):
+                asyncio.run(filter_._post_otlp([]))
+
+    def test_large_clock_skew_shifts_span_times(self):
+        module = load_filter_module()
+        filter_ = module.Filter()
+        filter_._clock_offset = 120.0
+        spans = [{"startTimeUnixNano": "1000", "endTimeUnixNano": "2000"}]
+
+        filter_._shift_span_times(spans)
+
+        self.assertEqual(spans[0]["startTimeUnixNano"], str(1000 + 120_000_000_000))
+        self.assertEqual(spans[0]["endTimeUnixNano"], str(2000 + 120_000_000_000))
 
 
 if __name__ == "__main__":
