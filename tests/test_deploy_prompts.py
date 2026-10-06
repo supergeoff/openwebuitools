@@ -14,15 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = ROOT / ".github" / "scripts" / "deploy-prompts.py"
 PROMPT_DIR = ROOT / "prompts"
 REQUIRED_PROMPTS = [
-    "core",
-    "task_management",
     "memory",
-    "tools",
-    "research",
-    "coding",
     "output_style",
+    "skills",
+    "task_management",
+    "tools",
     "evaluator_owui_judge",
 ]
+SYSTEM_PROMPT_MODULES = ["output_style", "tools", "memory", "skills", "task_management"]
 
 
 def load_deploy_prompts_module():
@@ -53,20 +52,39 @@ class DeployPromptsParsingTests(unittest.TestCase):
     def test_split_prompt_content_keeps_known_policy_anchors(self):
         module = load_deploy_prompts_module()
 
-        memory = module.parse_prompt_file(PROMPT_DIR / "memory.md", label="production")
-        task_management = module.parse_prompt_file(
-            PROMPT_DIR / "task_management.md", label="production"
-        )
-        research = module.parse_prompt_file(PROMPT_DIR / "research.md", label="production")
-        coding = module.parse_prompt_file(PROMPT_DIR / "coding.md", label="production")
+        def load(name):
+            return module.parse_prompt_file(PROMPT_DIR / f"{name}.md", label="production")
 
-        self.assertIn("{{hindsight_bankid}}", memory.prompt)
+        output_style = load("output_style")
+        tools = load("tools")
+        memory = load("memory")
+        skills = load("skills")
+        task_management = load("task_management")
+
+        self.assertTrue(output_style.prompt.startswith("# Langue et style"))
+        self.assertIn("JAMAIS DE STYLE TÉLÉGRAPHIQUE", output_style.prompt)
+        self.assertTrue(tools.prompt.startswith("# Outils et sources"))
+        self.assertIn("search_tools", tools.prompt)
+        self.assertIn("call_tool_write", tools.prompt)
+        self.assertTrue(memory.prompt.startswith("# Mémoire Hindsight (obligatoire)"))
+        self.assertIn("list_mental_models", memory.prompt)
+        self.assertIn('tags_match "any_strict"', memory.prompt)
+        self.assertIn('list_tags avec q "s:*"', memory.prompt)
+        self.assertTrue(skills.prompt.startswith("# Skills et recherche web"))
+        self.assertIn("skill web-search", skills.prompt)
         self.assertIn("create_tasks", task_management.prompt)
         self.assertIn("update_task", task_management.prompt)
-        self.assertIn("SearXNG and crawl4ai", research.prompt)
-        self.assertIn("Do not treat GitHub search alone as sufficient", research.prompt)
-        self.assertIn("current coder workspace", coding.prompt)
-        self.assertIn("Google Drive, Docs, Sheets, or other external storage only", coding.prompt)
+
+    def test_system_prompt_modules_have_no_template_variables(self):
+        # The system filter compiles modules without variables, so a literal
+        # mustache tag would reach the model unresolved.
+        module = load_deploy_prompts_module()
+
+        for name in SYSTEM_PROMPT_MODULES:
+            definition = module.parse_prompt_file(
+                PROMPT_DIR / f"{name}.md", label="production"
+            )
+            self.assertNotIn("{{", definition.prompt, name)
 
     def test_prompt_name_comes_from_filename_and_label_from_config(self):
         module = load_deploy_prompts_module()

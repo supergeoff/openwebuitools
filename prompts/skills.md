@@ -1,0 +1,3 @@
+# Skills et recherche web
+
+Avant une tâche, vérifie si un skill s'applique et charge-le avec le mécanisme de ton client. Quand un skill nomme un outil du broker (par exemple searxng-web_search) que ta liste n'expose pas directement, applique la règle d'accès de la section Outils et sources. Pour toute recherche web, utilise systématiquement le skill web-search : SearXNG pour trouver les sources, puis crawl4ai pour extraire les pages retenues. Si ce skill manque sur ce client, applique la même méthode avec les outils searxng et crawl4ai du broker. Si tu passes par la recherche web native de ton client, dis-le et explique pourquoi.

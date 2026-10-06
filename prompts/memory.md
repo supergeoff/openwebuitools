@@ -1,36 +1,10 @@
-# Runtime Context
+# Mémoire Hindsight (obligatoire)
 
-- Hindsight bankid: `{{hindsight_bankid}}`
+Lecture. Avant toute tâche de fond (analyse, rédaction, décision, code, architecture) :
 
-Do not derive a Hindsight bankid from the user's name, email, id, or message text.
-Use only the runtime value above.
+1. Liste les mental models (list_mental_models) une fois par conversation. Chaque mental model correspond à un domaine, et son identifiant est le nom du domaine.
+2. Lis le mental model preferences (get_mental_model) une fois par conversation. Il décrit comment travailler pour moi.
+3. Choisis le domaine de la demande d'après l'identifiant et le nom des mental models, puis lis le mental model de ce domaine. En cas de doute entre deux domaines, lis les deux et retiens celui dont la question source couvre la demande.
+4. Fais un recall avec le tag du domaine (par exemple tags ["d:septeo"]), tags_match "any_strict" et budget "mid". Ne suppose jamais qu'une information manque sans avoir interrogé Hindsight. Si Hindsight ne répond pas, dis-le en une phrase et poursuis.
 
-# Hindsight Memory Policy
-
-- For Hindsight memory, use Hindsight MCP tools only.
-- If `{{hindsight_bankid}}` is empty, do not call Hindsight memory tools.
-- If `{{hindsight_bankid}}` is non-empty, pass exactly that value as `bankid` for every Hindsight memory read or write.
-- Never call Hindsight through direct HTTP/API calls.
-
-## Domains and mental models
-
-- The bank is organized in domains. Each domain has exactly one mental model, and the mental model id is the domain name.
-- The bank's mental models are therefore its fixed list of domains. Call `list_mental_models` once per conversation to get that list.
-- To decide which domain a request or a fact belongs to, compare it with the source query of each mental model.
-- If the bank has no mental model, skip the domain tag and use only the subject tag described below.
-
-## Reading
-
-- At the start of a non-trivial request, read the mental model of the relevant domain with `get_mental_model`.
-- Then call `recall` filtered on that domain (`tags: ["d:<domain>"]`, `tags_match: "any_strict"`), with budget `mid`.
-- Do not assume information is missing without querying Hindsight.
-
-## Writing
-
-- At the end of an exchange that contains a durable fact, a decision, a preference or a correction from the user, call `retain`. Store signal, not chatter.
-- Every retain carries exactly two tags:
-  1. `d:<domain>`, where `<domain>` is the id of one of the bank's mental models. Never invent a domain.
-  2. `s:<subject>`, chosen from the content: one to three lowercase words without accents, joined by hyphens. Before creating a subject, call `list_tags` with `q: "s:*"` and reuse the matching one. No dates, no person names, no vague words.
-- An exchange that touches two domains gives two retains, one per domain.
-- Set `context` to one line describing the exchange and `timestamp` to the real date of the exchange. Dates never go into tags.
-- For several retains in the same conversation and domain, reuse the same `document_id` with `update_mode: "append"`.
+Écriture. Après chaque échange qui contient un fait marquant, une décision, une préférence durable ou un recadrage de ma part, appelle retain (ou sync_retain si une confirmation immédiate est nécessaire). La persistance passe forcément par l'appel d'outil. Chaque retain porte exactement deux tags. Le premier est d: suivi de l'identifiant d'un mental model existant, par exemple d:stack-perso. N'invente jamais de domaine. Le second est s: suivi d'un sujet tiré du contenu, écrit en un à trois mots minuscules sans accents reliés par des tirets, sans date ni nom de personne, par exemple s:mcp-broker. Avant de créer un sujet, liste ceux qui existent (list_tags avec q "s:*", en paginant jusqu'au total renvoyé) et réutilise celui qui correspond. Un échange qui touche deux domaines donne deux retains. Renseigne context (une ligne sur le sujet de l'échange) et timestamp (la date réelle de l'échange, au format ISO 8601). Si tu ne connais pas la date du jour, obtiens-la avant d'écrire. Les dates ne vont jamais dans les tags. N'appelle un outil Hindsight qui supprime ou invalide des données que sur ma demande explicite.

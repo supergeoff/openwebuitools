@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "coder" / "SKILL.md"
-CODING_PROMPT_PATH = ROOT / "prompts" / "coding.md"
 DEPLOY_SCRIPT_PATH = ROOT / ".github" / "scripts" / "deploy-skills.py"
 
 
@@ -79,7 +78,6 @@ class CoderReactSkillContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.skill_text = SKILL_PATH.read_text(encoding="utf-8")
-        cls.coding_prompt = CODING_PROMPT_PATH.read_text(encoding="utf-8")
 
     def test_skill_names_every_core_coder_mcp_tool(self):
         for tool in CORE_CODER_TOOLS:
@@ -116,22 +114,8 @@ class CoderReactSkillContractTests(unittest.TestCase):
 
     def test_finished_states_are_gated_consistently(self):
         # Both `complete` and `idle` are terminal "done" states for
-        # coder_report_task; the artifact gate must cover both, and SKILL.md and
-        # coding.md must agree on the terminal-state set.
+        # coder_report_task; the artifact gate must cover both.
         self.assertIn("`complete` or `idle`", self.skill_text)
-        self.assertIn("`complete` or `idle`", self.coding_prompt)
-
-    def test_coding_prompt_enforces_coder_react_loop(self):
-        expected_snippets = [
-            "Coder Workspace ReAct Loop",
-            "<HARD-GATE>",
-            "coder_workspace_bash",
-            "coder_report_task",
-            "`coder` skill",
-        ]
-        for snippet in expected_snippets:
-            with self.subTest(snippet=snippet):
-                self.assertIn(snippet, self.coding_prompt)
 
 
 class CoderReactSkillDeploymentTests(unittest.TestCase):

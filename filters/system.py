@@ -6,9 +6,8 @@ description: >
   Single source of truth for the system prompt across ALL models.
   The prompt itself lives in Langfuse as multiple text prompt modules, fetched
   concurrently (assembled in declaration order) and injected as the system
-  message on every request. The only
-  per-user runtime value managed here is hindsight_bankid, exposed to the
-  memory prompt as {{hindsight_bankid}}.
+  message on every request. Each module carries its own heading, so the
+  modules are joined as-is.
   Also records one Langfuse trace per assistant message through the Langfuse v4
   OpenTelemetry endpoint (OTLP/HTTP JSON, x-langfuse-ingestion-version: 4).
   The trace id is derived from the seed "owui-{chat_id}-{message_id}" with the
@@ -40,13 +39,11 @@ REQUEST_EVENT_NAME = "owui-chat-request"
 INFLIGHT_LIMIT = 2048
 
 PROMPT_MODULES = (
-    "core",
-    "task_management",
-    "memory",
-    "tools",
-    "research",
-    "coding",
     "output_style",
+    "tools",
+    "memory",
+    "skills",
+    "task_management",
 )
 TRACE_TAGS = ("owui", "system")
 
@@ -115,15 +112,8 @@ class Filter:
             ),
         )
 
-    class UserValves(BaseModel):
-        hindsight_bankid: str = Field(
-            default="",
-            description="Per-user Hindsight bankid passed to the Langfuse prompt.",
-        )
-
     def __init__(self):
         self.valves = self.Valves()
-        self.user_valves = self.UserValves()
         self._client = None
         self._warned_unresolved_tool_ids = set()
         self._warned_unresolved_skill_ids = set()
@@ -160,7 +150,7 @@ class Filter:
             )
         return prompt_modules
 
-    def _fetch_prompt_module(self, prompt_name: str, variables: dict) -> str:
+    def _fetch_prompt_module(self, prompt_name: str) -> str:
         """Fetch and compile one Langfuse prompt module. Fail closed."""
         client = self._get_client()
         try:
@@ -176,7 +166,7 @@ class Filter:
             ) from exc
 
         try:
-            text = prompt.compile(**variables)
+            text = prompt.compile()
         except Exception as exc:
             raise RuntimeError(
                 f"Langfuse prompt '{prompt_name}' label "
@@ -189,59 +179,23 @@ class Filter:
             )
         return text.strip()
 
-    async def _fetch_policy(self, __user__: Optional[dict]) -> str:
+    async def _fetch_policy(self) -> str:
         import asyncio
 
         # get_prompt is a blocking SDK call: run the fetches concurrently in
         # threads instead of serially on the event loop. gather preserves the
         # module declaration order, so the assembled prompt is unchanged.
         self._get_client()
-        prompt_names = self._prompt_module_names()
         texts = await asyncio.gather(
             *(
-                asyncio.to_thread(
-                    self._fetch_prompt_module,
-                    prompt_name,
-                    self._prompt_variables(prompt_name, __user__),
-                )
-                for prompt_name in prompt_names
+                asyncio.to_thread(self._fetch_prompt_module, prompt_name)
+                for prompt_name in self._prompt_module_names()
             )
         )
-        return "\n\n".join(
-            f"# Prompt Module: {prompt_name}\n\n{text}"
-            for prompt_name, text in zip(prompt_names, texts)
-        )
+        return "\n\n".join(texts)
 
-    def _get_user_valve(self, __user__: Optional[dict], key: str) -> Optional[str]:
-        """Read OpenWebUI UserValves from dict or Pydantic-style objects."""
-        if not __user__:
-            return ""
-        user_valves = (__user__.get("valves", {}) if __user__ else {}) or {}
-        if isinstance(user_valves, dict):
-            return user_valves.get(key, "")
-        if hasattr(user_valves, "model_dump"):
-            return user_valves.model_dump().get(key, "")
-        if hasattr(user_valves, "dict"):
-            return user_valves.dict().get(key, "")
-        return getattr(user_valves, key, "")
-
-    def _resolve_bankid(self, __user__: Optional[dict]) -> str:
-        """Use only the explicit per-user Hindsight bankid valve."""
-        value = self._get_user_valve(__user__, "hindsight_bankid")
-        if not value:
-            value = self.user_valves.hindsight_bankid
-        return str(value).strip() if value else ""
-
-    def _prompt_variables(self, prompt_name: str, __user__: Optional[dict]) -> dict:
-        if prompt_name != "memory":
-            return {}
-        return {"hindsight_bankid": self._resolve_bankid(__user__)}
-
-    async def _build_injected_prompt(
-        self,
-        __user__: Optional[dict],
-    ) -> str:
-        return (await self._fetch_policy(__user__)).strip()
+    async def _build_injected_prompt(self) -> str:
+        return (await self._fetch_policy()).strip()
 
     def _trace_seed(self, chat_id: str, message_id: str) -> str:
         # Former plain trace id, kept as the seed of the OTEL ids and as the
@@ -860,7 +814,7 @@ class Filter:
         if not self.valves.enabled:
             return body
 
-        injected_prompt = await self._build_injected_prompt(__user__)
+        injected_prompt = await self._build_injected_prompt()
         if not injected_prompt:
             return body
 

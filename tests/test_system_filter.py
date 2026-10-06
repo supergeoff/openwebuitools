@@ -108,7 +108,7 @@ def fake_httpx(calls, status_code=200, payload=None):
 
 
 class SystemFilterTest(unittest.TestCase):
-    def test_memory_prompt_receives_hindsight_bankid_from_user_valve_only(self):
+    def test_prompt_modules_compile_without_user_data(self):
         module = load_filter_module()
         module.PROMPT_MODULES = ("memory",)
         filter_ = module.Filter()
@@ -130,76 +130,19 @@ class SystemFilterTest(unittest.TestCase):
             "id": "user-123",
             "email": "geoff@example.com",
             "name": "Geoff User",
-            "valves": {"hindsight_bankid": "geoff-bank"},
         }
         body = {"messages": [{"role": "user", "content": "Salut"}]}
 
         result = run_inlet(filter_, body, __user__=user)
 
-        self.assertEqual(calls, [{"hindsight_bankid": "geoff-bank"}])
+        self.assertEqual(calls, [{}])
         content = result["messages"][0]["content"]
-        self.assertIn("GLOBAL POLICY", content)
+        self.assertEqual(content, "GLOBAL POLICY")
         self.assertNotIn("Geoff User", content)
         self.assertNotIn("geoff@example.com", content)
         self.assertNotIn("user-123", content)
 
-    def test_hindsight_bankid_supports_user_valves_object(self):
-        module = load_filter_module()
-        module.PROMPT_MODULES = ("memory",)
-        filter_ = module.Filter()
-
-        class UserValves:
-            hindsight_bankid = "alice-bank"
-
-        class Prompt:
-            def compile(self, **kwargs):
-                return f"bankid={kwargs['hindsight_bankid']}"
-
-        class Client:
-            def get_prompt(self, *args, **kwargs):
-                return Prompt()
-
-        filter_._client = Client()
-
-        body = {"messages": [{"role": "user", "content": "Hello"}]}
-        result = run_inlet(filter_, body, __user__={"valves": UserValves()})
-
-        self.assertIn("bankid=alice-bank", result["messages"][0]["content"])
-        self.assertIn("# Prompt Module: memory", result["messages"][0]["content"])
-
-    def test_missing_user_bankid_compiles_empty_prompt_variable(self):
-        module = load_filter_module()
-        module.PROMPT_MODULES = ("memory",)
-        filter_ = module.Filter()
-
-        calls = []
-
-        class Prompt:
-            def compile(self, **kwargs):
-                calls.append(kwargs)
-                return "GLOBAL POLICY"
-
-        class Client:
-            def get_prompt(self, *args, **kwargs):
-                return Prompt()
-
-        filter_._client = Client()
-
-        body = {"messages": [{"role": "user", "content": "Hello"}]}
-        result = run_inlet(
-            filter_,
-            body,
-            __user__={"id": "user-123", "email": "geoff@example.com", "name": "Geoff"},
-        )
-
-        self.assertEqual(calls, [{"hindsight_bankid": ""}])
-        content = result["messages"][0]["content"]
-        self.assertIn("GLOBAL POLICY", content)
-        self.assertNotIn("Geoff", content)
-        self.assertNotIn("geoff@example.com", content)
-        self.assertNotIn("user-123", content)
-
-    def test_filter_has_only_user_bankid_for_hindsight(self):
+    def test_filter_has_no_hindsight_configuration(self):
         module = load_filter_module()
         filter_ = module.Filter()
 
@@ -211,7 +154,7 @@ class SystemFilterTest(unittest.TestCase):
         self.assertFalse(hasattr(filter_.valves, "hindsight_mcp_enabled"))
         self.assertFalse(hasattr(filter_.valves, "hindsight_injection_prefix"))
         self.assertFalse(hasattr(filter_.valves, "prompt_names"))
-        self.assertTrue(hasattr(filter_.user_valves, "hindsight_bankid"))
+        self.assertFalse(hasattr(filter_, "user_valves"))
 
     def test_existing_system_prompt_is_preserved_after_injections(self):
         module = load_filter_module()
@@ -233,16 +176,11 @@ class SystemFilterTest(unittest.TestCase):
                 return Prompt()
 
         filter_._client = Client()
-        result = run_inlet(
-            filter_,
-            body,
-            __user__={"name": "Alice", "valves": {"hindsight_bankid": "Alice"}},
-        )
+        result = run_inlet(filter_, body, __user__={"name": "Alice"})
 
         self.assertEqual(result["messages"][0]["role"], "system")
         content = result["messages"][0]["content"]
-        self.assertTrue(content.startswith("# Prompt Module: core"))
-        self.assertIn("GLOBAL POLICY", content)
+        self.assertTrue(content.startswith("GLOBAL POLICY"))
         self.assertTrue(content.endswith("Existing model policy."))
 
     def test_forced_tool_ids_are_added_without_duplicates(self):
@@ -419,26 +357,24 @@ class SystemFilterTest(unittest.TestCase):
 
         self.assertEqual(unresolved, ["inactive", "missing"])
 
-    def test_builtin_prompt_modules_include_task_management(self):
+    def test_builtin_prompt_modules_follow_default_prompt_sections(self):
         module = load_filter_module()
         filter_ = module.Filter()
 
         self.assertEqual(
             filter_._prompt_module_names(),
-            [
-                "core",
-                "task_management",
-                "memory",
-                "tools",
-                "research",
-                "coding",
-                "output_style",
-            ],
+            ["output_style", "tools", "memory", "skills", "task_management"],
         )
 
-    def test_split_prompts_assemble_in_order_and_only_memory_receives_bankid(self):
+    def test_builtin_prompt_modules_have_a_prompt_file(self):
         module = load_filter_module()
-        module.PROMPT_MODULES = ("core", "task_management", "memory", "tools")
+
+        for name in module.PROMPT_MODULES:
+            self.assertTrue((ROOT / "prompts" / f"{name}.md").exists(), name)
+
+    def test_split_prompts_assemble_in_declaration_order(self):
+        module = load_filter_module()
+        module.PROMPT_MODULES = ("output_style", "tools", "memory", "skills")
         filter_ = module.Filter()
         calls = []
 
@@ -450,7 +386,7 @@ class SystemFilterTest(unittest.TestCase):
 
             def compile(self, **kwargs):
                 self.compile_calls.append((self.name, kwargs))
-                return f"{self.name}:{kwargs.get('hindsight_bankid', 'NO_BANKID')}"
+                return f"# {self.name}\n\n{self.name} body"
 
         class Client:
             def get_prompt(self, name, **kwargs):
@@ -462,39 +398,31 @@ class SystemFilterTest(unittest.TestCase):
         result = run_inlet(
             filter_,
             {"messages": [{"role": "user", "content": "Hello"}]},
-            __user__={"valves": {"hindsight_bankid": "bank-1"}},
         )
 
         # Fetches run concurrently; only the set of fetched modules is
         # deterministic, the assembled section order is asserted below.
         self.assertEqual(
             sorted(name for name, _ in calls),
-            sorted(["core", "task_management", "memory", "tools"]),
+            sorted(["output_style", "tools", "memory", "skills"]),
         )
         self.assertEqual(
             [kwargs["label"] for _, kwargs in calls],
             ["production", "production", "production", "production"],
         )
         self.assertEqual(sorted(Prompt.compile_calls), sorted([
-            ("core", {}),
-            ("task_management", {}),
-            ("memory", {"hindsight_bankid": "bank-1"}),
+            ("output_style", {}),
             ("tools", {}),
+            ("memory", {}),
+            ("skills", {}),
         ]))
-        content = result["messages"][0]["content"]
-        self.assertLess(
-            content.index("# Prompt Module: core"),
-            content.index("# Prompt Module: task_management"),
+        self.assertEqual(
+            result["messages"][0]["content"],
+            "# output_style\n\noutput_style body\n\n"
+            "# tools\n\ntools body\n\n"
+            "# memory\n\nmemory body\n\n"
+            "# skills\n\nskills body",
         )
-        self.assertLess(
-            content.index("# Prompt Module: task_management"),
-            content.index("# Prompt Module: memory"),
-        )
-        self.assertLess(content.index("# Prompt Module: memory"), content.index("# Prompt Module: tools"))
-        self.assertIn("core:NO_BANKID", content)
-        self.assertIn("task_management:NO_BANKID", content)
-        self.assertIn("memory:bank-1", content)
-        self.assertIn("tools:NO_BANKID", content)
 
     def test_missing_langfuse_keys_hard_fail_when_prompt_enabled(self):
         module = load_filter_module()
@@ -505,7 +433,7 @@ class SystemFilterTest(unittest.TestCase):
 
     def test_langfuse_prompt_fetch_failure_hard_fails_with_module_name(self):
         module = load_filter_module()
-        module.PROMPT_MODULES = ("core",)
+        module.PROMPT_MODULES = ("tools",)
         filter_ = module.Filter()
 
         class Client:
@@ -514,7 +442,7 @@ class SystemFilterTest(unittest.TestCase):
 
         filter_._client = Client()
 
-        with self.assertRaisesRegex(RuntimeError, "core.*production.*not found"):
+        with self.assertRaisesRegex(RuntimeError, "tools.*production.*not found"):
             run_inlet(filter_, {"messages": [{"role": "user", "content": "Hello"}]})
 
     def test_empty_compiled_prompt_hard_fails_with_module_name(self):

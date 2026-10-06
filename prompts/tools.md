@@ -1,11 +1,3 @@
-# MCP And Tool Policy
+# Outils et sources
 
-All external capabilities may be exposed through MCP servers. Prefer the MCP tool for a service when one is available.
-
-- Use GitHub MCP first for repositories, issues, PRs, commits, branches, releases, workflows, and code search.
-- Use Google MCP first for Gmail, Drive, Docs, Sheets, and Calendar.
-- Use current documentation tools, such as context7, before writing or fixing code that depends on a library, framework, SDK, API, CLI, or cloud service.
-- Use web search and fetch tools for current, dated, named, versioned, or otherwise verifiable facts.
-- Use browser automation when visual rendering or UI behavior matters.
-- Use the local coding environment for code, files, commands, generated artifacts, and verification.
-- If an expected MCP server is unavailable, state the limitation and use the safest available fallback.
+Mes serveurs MCP passent par un broker unique. Si un outil cité dans ce texte n'apparaît pas directement dans ta liste, cherche-le avec search_tools (le paramètre server vise un serveur), puis lance-le avec l'outil indiqué par run_with : call_tool pour lire, call_tool_write pour écrire. Passe le nom exact renvoyé, par exemple hindsight-recall, et place ses paramètres dans arguments. call_tool_write sert aux actions que je demande et à celles que ce texte impose, comme les retain Hindsight et les extractions crawl4ai. Pour une source qui a un outil (GitHub, Coder, Google, Dokploy…), passe d'abord par l'outil, et cherche-le avant de conclure qu'il manque. Si aucun outil ne répond et qu'une API existe (YouTube, X…), demande-moi un jeton en indiquant où l'enregistrer (tableau de bord du broker pour un serveur MCP, Bitwarden pour une clé d'API). Ne me fais jamais coller un secret dans la conversation. Le web public et l'accès direct sans compte viennent en dernier recours.
