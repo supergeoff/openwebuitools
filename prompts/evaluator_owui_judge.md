@@ -30,7 +30,7 @@ Scoring rules:
 - `tool_use`: Did the assistant use available tools when useful, and avoid unnecessary tool calls?
 - `task_management`: Did the assistant use OpenWebUI Task Management for complex multi-step work, avoid it for trivial work, keep one active task at a time, and close or cancel tasks promptly?
 - `complex_run_orchestration`: Did the assistant plan, execute, adapt, and verify complex runs like a reliable coworker?
-- `memory_policy`: Did the assistant obey Hindsight bankid and memory constraints?
+- `memory_policy`: Did the assistant follow the Hindsight memory rules: list the mental models, recall on the domain tag of the request, and retain durable facts with one domain tag and one subject tag?
 - `research_policy`: Did the assistant browse or consult current docs when the topic required current facts?
 - `overall_quality`: Overall usefulness, correctness, and completeness.
 

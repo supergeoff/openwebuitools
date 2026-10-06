@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import os
+import re
 import sys
 import tempfile
 import types
@@ -70,6 +71,7 @@ class DeployPromptsParsingTests(unittest.TestCase):
         self.assertIn("list_mental_models", memory.prompt)
         self.assertIn('tags_match "any_strict"', memory.prompt)
         self.assertIn('list_tags avec q "s:*"', memory.prompt)
+        self.assertIn("aucun identifiant de banque", memory.prompt)
         self.assertTrue(skills.prompt.startswith("# Skills et recherche web"))
         self.assertIn("skill web-search", skills.prompt)
         self.assertIn("create_tasks", task_management.prompt)
@@ -85,6 +87,21 @@ class DeployPromptsParsingTests(unittest.TestCase):
                 PROMPT_DIR / f"{name}.md", label="production"
             )
             self.assertNotIn("{{", definition.prompt, name)
+
+    def test_system_prompt_modules_stay_user_neutral(self):
+        # The repo serves every Open WebUI user: the system prompt must not
+        # speak in one user's voice or name one user's domains or tools.
+        module = load_deploy_prompts_module()
+        first_person = re.compile(r"\b(je|j'|moi|me|mes|mon|ma)\b", re.IGNORECASE)
+        personal_terms = ["septeo", "stack-perso", "bitwarden", "geoff"]
+
+        for name in SYSTEM_PROMPT_MODULES:
+            definition = module.parse_prompt_file(
+                PROMPT_DIR / f"{name}.md", label="production"
+            )
+            self.assertIsNone(first_person.search(definition.prompt), name)
+            for term in personal_terms:
+                self.assertNotIn(term, definition.prompt.lower(), name)
 
     def test_prompt_name_comes_from_filename_and_label_from_config(self):
         module = load_deploy_prompts_module()
