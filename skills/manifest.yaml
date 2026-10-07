@@ -20,9 +20,11 @@
 # Local skills (skills/<name>/SKILL.md) are auto-discovered by
 # .github/scripts/deploy-skills.py and do NOT need to be listed here.
 
+# brainstorming, coder and web-search come from the supergeoff/agents repo, copied into skills/
+# by its scripts/sync-clients.py (see skills/SYNCED.md): they are local skills here.
+
 skills:
   # ── Upstream skills ────────────────────────────────────────
-  - https://github.com/obra/superpowers/tree/main/skills/brainstorming
 
   # ── Single-file SKILL.md example ───────────────────────────
   # - https://github.com/foo/bar/blob/main/path/to/SKILL.md

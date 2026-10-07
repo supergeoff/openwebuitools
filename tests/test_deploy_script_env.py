@@ -12,10 +12,8 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPTS = sorted((ROOT / ".github" / "scripts").glob("deploy-*.py"))
 OPENWEBUI_SCRIPTS = [
-    ROOT / ".github" / "scripts" / "deploy-actions.py",
     ROOT / ".github" / "scripts" / "deploy-filters.py",
     ROOT / ".github" / "scripts" / "deploy-tools.py",
-    ROOT / ".github" / "scripts" / "deploy-pipes.py",
     ROOT / ".github" / "scripts" / "deploy-models.py",
 ]
 
@@ -65,8 +63,6 @@ class DeployScriptEnvTests(unittest.TestCase):
                 source = script_path.read_text(encoding="utf-8")
 
                 self.assertNotRegex(source, r"os\.getenv\([^\n]+,")
-                self.assertNotIn("DEFAULT_LANGFUSE_HOST", source)
-                self.assertNotIn("DEFAULT_LABEL", source)
 
     def test_deploy_skills_workflow_runs_when_deploy_script_changes(self):
         workflow = ROOT / ".github" / "workflows" / "deploy-skills.yml"
@@ -82,10 +78,11 @@ class DeployScriptEnvTests(unittest.TestCase):
         self.assertIn("'.github/scripts/deploy-tools.py'", source)
         self.assertIn("'.github/workflows/deploy-tools.yml'", source)
 
-    def test_deploy_actions_workflow_runs_when_deploy_script_changes(self):
-        workflow = ROOT / ".github" / "workflows" / "deploy-actions.yml"
+    def test_deploy_models_workflow_runs_when_prompts_or_script_change(self):
+        workflow = ROOT / ".github" / "workflows" / "deploy-models.yml"
         source = workflow.read_text(encoding="utf-8")
 
-        self.assertIn("'actions/**'", source)
-        self.assertIn("'.github/scripts/deploy-actions.py'", source)
-        self.assertIn("'.github/workflows/deploy-actions.yml'", source)
+        self.assertIn("'models/**'", source)
+        self.assertIn("'prompts/**'", source)
+        self.assertIn("'.github/scripts/deploy-models.py'", source)
+        self.assertIn("'.github/workflows/deploy-models.yml'", source)

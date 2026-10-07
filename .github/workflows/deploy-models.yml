@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     paths:
       - 'models/**'
+      - 'prompts/**'
+      - '.github/scripts/deploy-models.py'
+      - '.github/workflows/deploy-models.yml'
   workflow_dispatch:
 
 jobs:
@@ -19,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pyyaml pyyaml
+        run: pip install requests pyyaml
 
       - name: Deploy models to OpenWebUI
         env:
