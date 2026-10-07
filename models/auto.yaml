@@ -1,0 +1,27 @@
+# Config déclarative du modèle auto d'Open WebUI, appliquée par .github/scripts/deploy-models.py.
+#
+# Le slug auto vient de LiteLLM : le script met à jour la config de ce modèle de base lui-même,
+# sans créer de modèle custom. Il écrit le prompt système, les outils et les skills, et garde le
+# reste de la config live (nom, image, description, capacités, terminal, droits d'accès).
+id: auto
+
+# Prompt système : les modules de prompts/, joints dans cet ordre. style, broker, memory,
+# skills et conduct sont générés depuis le dépôt supergeoff/agents par scripts/sync-clients.py ;
+# owui est propre à Open WebUI.
+prompt_modules: [style, broker, memory, skills, conduct, owui]
+
+meta:
+  # server:mcp:tools est le broker (https://mcp.supergeoff.top/mcp), server:mcp:notion le
+  # serveur Notion en direct.
+  toolIds:
+    - server:mcp:tools
+    - server:mcp:notion
+    - question_wizard
+    - inline_visualizer
+    - vision_bridge
+  skillIds:
+    - brainstorming
+    - question
+    - coder
+    - web_search
+    - inline_visualizer

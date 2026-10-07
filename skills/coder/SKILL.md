@@ -1,24 +1,39 @@
 ---
 name: coder
-description: "Use when work runs inside a Coder workspace (a remote dev machine exposed through the Coder MCP server) to run, build, test, edit, debug, or serve code; enforces a deterministic ReAct loop (reason, act with one coder_* tool, observe the real result) and closes every change by reading the artifacts back, verifying them, and listing them."
-tags: ["coder", "mcp", "react", "coding", "workspace", "artifacts", "determinism"]
+description: "Use when work runs inside a Coder workspace (a remote dev machine reached through the coder server of the MCP broker) to run, build, test, edit, debug, or serve code; enforces a deterministic ReAct loop (reason, act with one Coder tool, observe the real result) and closes every change by reading the artifacts back, verifying them, and listing them."
 ---
 
 # Coder Workspace ReAct Loop
 
 Use this skill whenever code is executed or modified inside a Coder workspace
-(github.com/coder/coder) reached through the Coder MCP server. Here "ReAct" means
+(github.com/coder/coder) reached through the MCP broker. Here "ReAct" means
 Reason + Act (Thought -> Action -> Observation). It is not the JavaScript framework.
 
 The workspace is a real remote machine and the single source of truth. Do not
 reason about code you have not run there, and do not hand code to the user to run
-themselves. Act through Coder MCP tools, observe the actual output, and report
+themselves. Act through the Coder tools, observe the actual output, and report
 only results you have verified in the workspace.
 
-## Coder MCP tool map
+## Reaching the Coder tools
 
-One tool per step. Prefer the dedicated file tools over `coder_workspace_bash`
-for reading, writing, listing, and editing files.
+The Coder tools sit behind the broker, on the server `coder`. Each upstream tool is
+exposed with the server prefix: `coder_workspace_bash` becomes `coder-coder_workspace_bash`.
+
+1. Find the tools with `search_tools` (`server: "coder"`, an empty `query` lists them).
+2. Run each one with the tool its `run_with` names: `call_tool` for the read-only ones
+   (listing, reading, logs), `call_tool_write` for the ones that change something
+   (bash, writes, edits, port forwarding, task reports).
+3. Pass the exact returned `name` and put the tool's parameters in `arguments`.
+
+If `coder` is missing from the broker's server list, tell the user: they connect it once
+on LiteLLM's connect page. If your client exposes the Coder tools directly (bare names,
+no broker), call them directly with the same arguments.
+
+## Coder tool map
+
+One tool per step. Prefer the dedicated file tools over `coder_workspace_bash` for
+reading, writing, listing, and editing files. Names are the upstream names; through the
+broker, add the `coder-` prefix.
 
 | Phase | Tool | Use for |
 |---|---|---|
@@ -46,10 +61,10 @@ directly: `coder_create_task`, `coder_list_tasks`, `coder_get_task_status`,
    so you rarely need to start it manually.
 2. Reason. State the smallest next step and the single tool that performs it.
    Keep reasoning short; plan only the next action in detail.
-3. Act. Call exactly one `coder_*` tool. Never paste code for the user to run.
-4. Observe. Read the real return value: stdout, exit code, file bytes, logs. If
-   it failed, fix the cause and retry the same tool. Do not work around a failed
-   file write with bash.
+3. Act. Call exactly one Coder tool. Never paste code for the user to run.
+4. Observe. Read the real return value: stdout, exit code, file bytes, logs, and the
+   `isError` flag of the broker answer. If it failed, fix the cause and retry the same
+   tool. Do not work around a failed file write with bash.
 5. Repeat 2-4 until the change is implemented.
 6. Close the loop (Artifact retrieval below). Only then report a finished state
    (`complete` or `idle`).
@@ -76,7 +91,8 @@ these formats:
 `coder_get_workspace` takes the name or ID as `workspace_id`. Resolve the target
 once, then pass the same `workspace` value to every later call. `coder_workspace_bash`
 also accepts `timeout_ms` (default 60000, max 300000) and `background: true` for
-long-running services.
+long-running services. A broker call can take up to two minutes: do not resend a
+write before it answers.
 
 ## Artifact retrieval (closing the loop)
 
@@ -117,40 +133,47 @@ test", "Running the test suite"). Bad summaries are vague ("working on it",
 
 ## Snippets
 
+Through the broker, every step is one `call_tool` or `call_tool_write` with the
+prefixed name.
+
 Orient, then run the tests (one action per step):
 
 ```text
-1. coder_get_workspace  { "workspace_id": "alice/dev-env" }
-2. coder_workspace_bash { "workspace": "alice/dev-env", "command": "cd /home/coder/app && npm test", "timeout_ms": 120000 }
+1. call_tool       { "name": "coder-coder_get_workspace",  "arguments": { "workspace_id": "alice/dev-env" } }
+2. call_tool_write { "name": "coder-coder_workspace_bash", "arguments": { "workspace": "alice/dev-env", "command": "cd /home/coder/app && npm test", "timeout_ms": 120000 } }
 ```
 
 Write a file, then read it back and run it:
 
 ```text
-1. coder_workspace_write_file { "workspace": "alice/dev-env", "path": "/home/coder/app/scripts/report.py", "content": "<base64 bytes>" }
-2. coder_workspace_read_file  { "workspace": "alice/dev-env", "path": "/home/coder/app/scripts/report.py" }
-3. coder_workspace_bash       { "workspace": "alice/dev-env", "command": "python /home/coder/app/scripts/report.py" }
+1. call_tool_write { "name": "coder-coder_workspace_write_file", "arguments": { "workspace": "alice/dev-env", "path": "/home/coder/app/scripts/report.py", "content": "<base64 bytes>" } }
+2. call_tool       { "name": "coder-coder_workspace_read_file",  "arguments": { "workspace": "alice/dev-env", "path": "/home/coder/app/scripts/report.py" } }
+3. call_tool_write { "name": "coder-coder_workspace_bash",       "arguments": { "workspace": "alice/dev-env", "command": "python /home/coder/app/scripts/report.py" } }
 ```
 
 Serve and expose a live artifact:
 
 ```text
-1. coder_workspace_bash         { "workspace": "alice/dev-env", "command": "cd /home/coder/app && npm run dev", "background": true }
-2. coder_workspace_port_forward { "workspace": "alice/dev-env", "port": 3000 }
+1. call_tool_write { "name": "coder-coder_workspace_bash",         "arguments": { "workspace": "alice/dev-env", "command": "cd /home/coder/app && npm run dev", "background": true } }
+2. call_tool_write { "name": "coder-coder_workspace_port_forward", "arguments": { "workspace": "alice/dev-env", "port": 3000 } }
 ```
 
 Report progress around the work:
 
 ```text
-coder_report_task { "summary": "Running the test suite", "state": "working" }
+call_tool_write { "name": "coder-coder_report_task", "arguments": { "summary": "Running the test suite", "state": "working" } }
 ... act and observe ...
-coder_report_task { "summary": "Tests green; report.csv generated and verified", "state": "complete" }
+call_tool_write { "name": "coder-coder_report_task", "arguments": { "summary": "Tests green; report.csv generated and verified", "state": "complete" } }
 ```
+
+Check `run_with` in the `search_tools` answer before each first use: it is the authority
+on `call_tool` versus `call_tool_write`.
 
 ## Common mistakes
 
 | Mistake | Fix |
 |---|---|
+| Calling `coder_workspace_bash` directly through the broker | Search with `search_tools`, then run `coder-coder_workspace_bash` with its `run_with`. |
 | Pasting code for the user to run | Run it in the workspace with `coder_workspace_bash`. |
 | Claiming success without running | Verify with a real command and capture the exit code. |
 | Using `cat`/`echo`/heredoc for files | Use `coder_workspace_read_file` / `coder_workspace_write_file`. |
