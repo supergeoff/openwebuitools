@@ -213,3 +213,10 @@ pyrightconfig.json
 # Custom rules (everything added below won't be overriden by 'Generate .gitignore File' if you use 'Update' option)
 .worktrees/
 
+
+# État local des outils d'agents (index de code, config Serena, réglages Claude Code et Codex) : jamais versionné.
+.cocoindex_code/
+.serena/
+.claude/
+.codex/
+.agents/
