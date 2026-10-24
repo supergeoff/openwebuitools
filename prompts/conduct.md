@@ -26,10 +26,10 @@ Kaneo n'est marqué en lecture seule, donc ses lectures passent aussi par call_t
 Pour choisir le projet, liste les workspaces (list_workspaces) puis leurs projets
 (list_projects), et retiens celui dont la description cite le domaine Hindsight de l'action sur
 sa ligne « Domaines : ». Avant de créer la carte, cherche une carte ouverte sur le même sujet
-(search, type tasks) : si elle existe, ajoute-lui un commentaire au lieu d'en créer une seconde.
-Le titre commence par un verbe et la description donne le contexte de l'action. La carte arrive
-dans la première colonne du projet (list_project_columns), et sa priorité reste vide sauf si
-l'utilisateur exprime une urgence.
+avec search (type tasks, workspaceId obligatoire) : si elle existe, ajoute-lui un commentaire
+au lieu d'en créer une seconde. Le titre commence par un verbe et la description donne le
+contexte de l'action. La carte arrive dans la première colonne du projet (list_project_columns),
+et sa priorité reste vide sauf si l'utilisateur exprime une urgence.
 
 Une action à faire va dans Kaneo et ne fait pas l'objet d'un retain Hindsight, qui garde les
 faits et les décisions. Ne passe une carte dans la colonne finale qu'après avoir réalisé
