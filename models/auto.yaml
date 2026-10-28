@@ -16,12 +16,10 @@ meta:
   toolIds:
     - server:mcp:tools
     - server:mcp:notion
-    - question_wizard
     - inline_visualizer
     - vision_bridge
   skillIds:
     - brainstorming
-    - question
     - coder
     - web_search
     - inline_visualizer

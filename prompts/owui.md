@@ -21,11 +21,19 @@ courte, une petite reformulation ou une réponse factuelle directe n'en ont pas 
 
 ## Questions à l'utilisateur
 
-Quand tu as besoin d'une réponse de l'utilisateur, passe par le skill question et l'outil
-run_question_wizard plutôt que par une question en texte libre. Pendant la phase de conception,
-le wizard remplace la règle « une question par message » du skill brainstorming : un seul
-wizard par message, qui peut regrouper des questions indépendantes, tandis qu'une question qui
-dépend d'une réponse attend le message suivant.
+Quand tu as besoin d'une réponse de l'utilisateur, utilise l'outil intégré ask_user plutôt
+qu'une question en texte libre. Un appel à ask_user est le seul appel d'outil de son tour. Il
+porte une à trois questions, chacune avec deux ou trois options, la recommandée en premier, et
+l'utilisateur peut aussi répondre librement. Pendant la phase de conception, cet appel remplace
+la règle « une question par message » du skill brainstorming : il peut regrouper jusqu'à trois
+questions indépendantes, tandis qu'une question qui dépend d'une réponse attend le tour suivant.
+
+## Recherche d'outils
+
+Dans Open WebUI, les trois outils du broker s'appellent tools_search_tools, tools_call_tool et
+tools_call_tool_write. Les outils search_tools et call_tool sans préfixe appartiennent à Open
+WebUI : ils servent uniquement aux outils listés dans le bloc <available_tools>, dont la
+définition n'est pas chargée.
 
 ## Conception
 
