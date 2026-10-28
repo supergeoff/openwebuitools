@@ -681,10 +681,6 @@ def main() -> int:
         if payload is None:
             continue
 
-        # Ensure SKILL.md frontmatter contains the script asset for
-        # run_question_wizard: the question_wizard.py tool ships as a
-        # standalone file; if the local skill references it the script
-        # can inline it as an asset.
         log.info(
             "built payload id=%s name=%r assets=%d size=%d",
             payload.id, payload.name, len(bundle.assets), len(payload.content),
