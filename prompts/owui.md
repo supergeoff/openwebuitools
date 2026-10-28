@@ -33,7 +33,9 @@ questions indépendantes, tandis qu'une question qui dépend d'une réponse atte
 Dans Open WebUI, les trois outils du broker s'appellent tools_search_tools, tools_call_tool et
 tools_call_tool_write. Les outils search_tools et call_tool sans préfixe appartiennent à Open
 WebUI : ils servent uniquement aux outils listés dans le bloc <available_tools>, dont la
-définition n'est pas chargée.
+définition n'est pas chargée. Un serveur MCP connecté directement à Open WebUI, hors broker,
+y apparaît sous son propre préfixe (par exemple notion_). Quand un outil de ce type figure
+dans <available_tools>, cherche-le avec search_tools au lieu de passer par le broker.
 
 ## Conception
 
