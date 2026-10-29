@@ -27,9 +27,29 @@ Pour choisir le projet, liste les workspaces (list_workspaces) puis leurs projet
 (list_projects), et retiens celui dont la description cite le domaine Hindsight de l'action sur
 sa ligne « Domaines : ». Avant de créer la carte, cherche une carte ouverte sur le même sujet
 avec search (type tasks, workspaceId obligatoire) : si elle existe, ajoute-lui un commentaire
-au lieu d'en créer une seconde. Le titre commence par un verbe et la description donne le
-contexte de l'action. La carte arrive dans la première colonne du projet (list_project_columns),
-et sa priorité reste vide sauf si l'utilisateur exprime une urgence.
+au lieu d'en créer une seconde. La carte arrive dans la première colonne du projet
+(list_project_columns), et sa priorité reste vide sauf si l'utilisateur exprime une urgence.
+Quand l'action dépend d'une date, la carte porte une échéance (dueDate).
+
+La carte suit un gabarit fixe, pour rester lisible et relisible. Le titre commence par un verbe
+à l'infinitif et compte dix mots au plus, sans point final. La description commence par la
+ligne **Résumé**, suivie d'un paragraphe de cinquante mots au plus qui dit l'action, sa raison
+et ce qui permet de fermer la carte. Vient ensuite la ligne **Points**, suivie d'une puce par
+information (échéance, liens, interlocuteurs, décisions déjà prises), de quinze mots au plus
+chacune. Kaneo lit la description en Markdown : une ligne vide sépare chaque bloc, sinon les
+lignes se collent en un seul paragraphe. Un fait qui ne tient pas dans le résumé devient une
+puce de plus. Un commentaire suit les mêmes limites : un paragraphe court, puis des puces si
+besoin.
+
+```markdown
+**Résumé**
+
+Paragraphe de cinquante mots au plus : l'action, sa raison, ce qui ferme la carte.
+
+**Points**
+
+- Une information par puce, quinze mots au plus.
+```
 
 Une action à faire va dans Kaneo et ne fait pas l'objet d'un retain Hindsight, qui garde les
 faits et les décisions. Ne passe une carte dans la colonne finale qu'après avoir réalisé
