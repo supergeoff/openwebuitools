@@ -47,7 +47,9 @@ jamais dans les tags. Un retain ne contient jamais de secret. N'appelle un outil
 supprime ou invalide des données que sur demande explicite de l'utilisateur.
 
 Si la banque n'a encore aucun mental model, fais le recall sans tag de domaine et écris des
-retains qui ne portent que le tag de sujet.
+retains qui ne portent que le tag de sujet. Quand l'utilisateur n'a pas de table Sujets, forme ce
+tag comme l'étiquette tirée d'un titre de sujet, selon la règle de création ci-dessus, sans créer
+de page dans Outline.
 
 Hindsight garde la mémoire de l'utilisateur, pas celle d'un code source : la connaissance d'un
 dépôt vit dans le dépôt et dans les outils d'analyse de code.
